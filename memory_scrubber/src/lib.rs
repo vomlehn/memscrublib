@@ -1,17 +1,25 @@
 // Main memory scrubber function callable from C
 
-use std::error::Error;
-use std::fmt;
+use thiserror::Error;
 
-// Number of bits in an address field:
+// ***************
+// Architecture-dependent definitions
+//
+// The following definitions are for the cache with the largest cache line.
+//
 // CACHELINE_INDEX - Number of bits required to address all bytes in
 //      a cache line.
 // CACHELINE_SIZE - Number of bytes in a cacheline
 // CACHE_INDEX - Number of bits required to address all cache lines in the
 //      cache
+// CACHE_SIZE - Number of cache lines in the cache
 const CACHELINE_INDEX: usize = 6;
 const CACHELINE_SIZE: usize = 1 << CACHELINE_INDEX;
 const CACHE_INDEX: usize = 10;
+const CACHE_SIZE: usize = 1 << CACHE_INDEX;
+
+// Data type that can hold any address for manipulation as an integer
+type Addr = usize;
 
 // Data type on which the ECC operations. So, if it operates on a 64-but
 // value, this should be u64
@@ -20,6 +28,7 @@ type ECCData = u64;
 const ECCDATA_PER_CACHELINE: usize =
     CACHELINE_SIZE as usize / std::mem::size_of::<ECCData>();
 type Cacheline = [ECCData; ECCDATA_PER_CACHELINE];
+// ***************
 
 /*
 #[repr(C)]
@@ -54,19 +63,16 @@ pub extern "C" fn memory_scrubber_scrub(memory_scrubber: CMemoryScrubber,
 }
 */
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum MemoryScrubberError {
+    #[error("Address must be aligned on cache line boundary")]
     UnalignedAddress,
+
+    #[error("Size must be a multiple of cache line size")]
     UnalignedSize,
-}
 
-impl Error for MemoryScrubberError {
-}
-
-impl fmt::Display for MemoryScrubberError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
+    #[error("Size may not be zero")]
+    ZeroSize,
 }
 
 // Structure to use for memory scrubbing
@@ -88,13 +94,19 @@ impl MemoryScrubber {
     //      multiple of the cache line size.
     pub fn new(start: *const u8, size: usize) ->
         Result<MemoryScrubber, MemoryScrubberError> {
-        let start_addr = start as usize;
+        let start_addr = start as Addr;
         if (start_addr % CACHELINE_SIZE) != 0 {
             return Err(MemoryScrubberError::UnalignedAddress);
         }
+
+        if size == 0 {
+            return Err(MemoryScrubberError::ZeroSize);
+        }
+
         if (size % CACHELINE_SIZE) != 0 {
             return Err(MemoryScrubberError::UnalignedSize);
         }
+
         Ok(MemoryScrubber {
             start: start as *const Cacheline,
             size: (size / CACHELINE_SIZE) as isize,
@@ -103,13 +115,25 @@ impl MemoryScrubber {
     }
 
     pub fn scrub(&self, n: usize) -> Result<(), MemoryScrubberError> {
-        for i in 0..n {
-            let offset = self.offset;
+        // Offset of the starting address, in cache lines
+        let start_offset = (self.start as Addr >> CACHELINE_INDEX) &
+            (CACHE_SIZE - 1);
+        let end = unsafe {
+            self.start.offset(self.size)
+        };
+        println!("start_offset {:x} end {:x}", start_offset as Addr, end as Addr);
 
-            unsafe {
-                let p = self.start.offset(offset);
-                // Need to ensure this is not optimized away
-                let _dummy = *p.offset(offset);
+        // Scan through each cache line
+        for cache_line in 0..CACHE_SIZE {
+            // Compute the starting address by adding the cache line offset
+            let offset = cache_line + start_offset;
+            let base = unsafe {
+                self.start.offset(offset as isize)
+            };
+            println!("base {:x}", base as Addr);
+
+            while base < end {
+                break;
             }
         }
         Ok(())
@@ -145,17 +169,14 @@ mod tests {
         let mem_area: Vec<u8> = vec![0; size];
         let p = mem_area.as_ptr() as *const u8;
         let (p, size) = align_area(p, size);
-        let p = unsafe { p.offset(1) };
-
-        let memory_scrubber = match MemoryScrubber::new(p, size) {
-            Err(e) => panic!("Unable to create MemoryScrubber: {}", e),
-            Ok(memory_scrubber) => memory_scrubber,
+        let p = unsafe {
+            p.offset(1)
         };
 
-        match memory_scrubber.scrub(CACHELINE_SIZE * 10) {
-            Err(e) => panic!("Scrub failed: {}", e),
-            Ok(_) => println!("Scrub succeeded!"),
-        };
+        let memory_scrubber = MemoryScrubber::new(p, size);
+        assert!(memory_scrubber.is_err());
+        assert_eq!(memory_scrubber.err().unwrap(),
+            MemoryScrubberError::UnalignedAddress);
     }
 
     #[test]
@@ -164,22 +185,30 @@ mod tests {
         let mem_area: Vec<u8> = vec![0; size];
         let p = mem_area.as_ptr() as *const u8;
         let (p, size) = align_area(p, size);
-        let p = unsafe { p.offset(1) };
         let size = size - 1;
 
-        let memory_scrubber = match MemoryScrubber::new(p, size) {
-            Err(e) => panic!("Unable to create MemoryScrubber: {}", e),
-            Ok(memory_scrubber) => memory_scrubber,
-        };
+        let memory_scrubber = MemoryScrubber::new(p, size);
+        assert!(memory_scrubber.is_err());
+        assert_eq!(memory_scrubber.err().unwrap(),
+            MemoryScrubberError::UnalignedSize);
+    }
 
-        match memory_scrubber.scrub(CACHELINE_SIZE * 10) {
-            Err(e) => panic!("Scrub failed: {}", e),
-            Ok(_) => println!("Scrub succeeded!"),
-        };
+    #[test]
+    fn test_zero_size() {
+        let size = CACHELINE_SIZE * 16;
+        let mem_area: Vec<u8> = vec![0; size];
+        let p = mem_area.as_ptr() as *const u8;
+        let (p, size) = align_area(p, size);
+        let size = 0;
+
+        let memory_scrubber = MemoryScrubber::new(p, size);
+        assert!(memory_scrubber.is_err());
+        assert_eq!(memory_scrubber.err().unwrap(),
+            MemoryScrubberError::ZeroSize);
     }
 
     fn align_area(p: *const u8, size: usize) -> (*const u8, usize) {
-        let lower_p = (p as usize) % CACHELINE_SIZE;
+        let lower_p = (p as Addr) % CACHELINE_SIZE;
         let p_offset = CACHELINE_SIZE - lower_p;
         let p = unsafe { p.offset(p_offset as isize) };
 
