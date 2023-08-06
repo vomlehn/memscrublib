@@ -119,15 +119,16 @@ impl MemoryScrubber {
 
 #[cfg(test)]
 mod tests {
-    use std::mem;
     use super::*;
 
     #[test]
-    fn it_works() {
-        const buf: [u32; 5] = [0, 1, 2, 3, 4];
-        let size = mem::size_of_val(&buf);
-        let memory_scrubber =
-            match MemoryScrubber::new(buf.as_ptr() as *const u8, size) {
+    fn test_aligned() {
+        let size = CACHELINE_SIZE * 16;
+        let mem_area: Vec<u8> = vec![0; size];
+        let p = mem_area.as_ptr() as *const u8;
+        let (p, size) = align_area(p, size);
+
+        let memory_scrubber = match MemoryScrubber::new(p, size) {
             Err(e) => panic!("Unable to create MemoryScrubber: {}", e),
             Ok(memory_scrubber) => memory_scrubber,
         };
@@ -136,5 +137,54 @@ mod tests {
             Err(e) => panic!("Scrub failed: {}", e),
             Ok(_) => println!("Scrub succeeded!"),
         };
+    }
+
+    #[test]
+    fn test_unaligned_address() {
+        let size = CACHELINE_SIZE * 16;
+        let mem_area: Vec<u8> = vec![0; size];
+        let p = mem_area.as_ptr() as *const u8;
+        let (p, size) = align_area(p, size);
+        let p = unsafe { p.offset(1) };
+
+        let memory_scrubber = match MemoryScrubber::new(p, size) {
+            Err(e) => panic!("Unable to create MemoryScrubber: {}", e),
+            Ok(memory_scrubber) => memory_scrubber,
+        };
+
+        match memory_scrubber.scrub(CACHELINE_SIZE * 10) {
+            Err(e) => panic!("Scrub failed: {}", e),
+            Ok(_) => println!("Scrub succeeded!"),
+        };
+    }
+
+    #[test]
+    fn test_unaligned_size() {
+        let size = CACHELINE_SIZE * 16;
+        let mem_area: Vec<u8> = vec![0; size];
+        let p = mem_area.as_ptr() as *const u8;
+        let (p, size) = align_area(p, size);
+        let p = unsafe { p.offset(1) };
+        let size = size - 1;
+
+        let memory_scrubber = match MemoryScrubber::new(p, size) {
+            Err(e) => panic!("Unable to create MemoryScrubber: {}", e),
+            Ok(memory_scrubber) => memory_scrubber,
+        };
+
+        match memory_scrubber.scrub(CACHELINE_SIZE * 10) {
+            Err(e) => panic!("Scrub failed: {}", e),
+            Ok(_) => println!("Scrub succeeded!"),
+        };
+    }
+
+    fn align_area(p: *const u8, size: usize) -> (*const u8, usize) {
+        let lower_p = (p as usize) % CACHELINE_SIZE;
+        let p_offset = CACHELINE_SIZE - lower_p;
+        let p = unsafe { p.offset(p_offset as isize) };
+
+        let size = size - p_offset;
+        let size = size - (size % CACHELINE_SIZE);
+        (p, size)
     }
 }
