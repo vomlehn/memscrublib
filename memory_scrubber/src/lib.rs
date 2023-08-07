@@ -5,23 +5,20 @@ use thiserror::Error;
 // Data type that can hold any address for manipulation as an integer
 type Addr = usize;
 
-// CacheDesc - Description of the cache
-// cacheline_width - Number of bits in the index into the cachline bytes
-// cache_width - Number of bits of the cache index.
-#[derive(Clone, Copy, Debug)]
-pub struct CacheDesc {
-    cacheline_width:    usize,
-    cache_width:        usize,
-}
+pub trait MemoryScrubberCacheDesc<Cacheline> {
+    fn cacheline_width(&self) -> usize;
 
-impl CacheDesc {
-    pub fn cacheline_size(&self) -> usize {
-        1 << self.cacheline_width
+    fn cacheline_size(&self) -> usize {
+        1 << self.cacheline_width()
     }
 
-    pub fn cache_size(&self) -> usize {
-        1 << self.cache_width
+    fn cache_width(&self) -> usize;
+
+    fn cache_size(&self) -> usize {
+        1 << self.cache_width()
     }
+
+    fn read_cacheline(&self, cacheline: *const Cacheline);
 }
 
 //------------------------------------------
@@ -73,36 +70,42 @@ pub enum MemoryScrubberError {
     ZeroSize,
 }
 
-struct MemoryScrubber<Cacheline> {
-    cache_desc: CacheDesc,
+struct MemoryScrubber<'a, Cacheline> {
+    cache_desc: &'a dyn MemoryScrubberCacheDesc<Cacheline>,
     start:      *const u8,
     size:       usize,
-    iterator:   MemoryScrubberIterator<Cacheline>,
+    iterator:   MemoryScrubberIterator<'a, Cacheline>,
 }
 
-impl<Cacheline> MemoryScrubber<Cacheline> {
+impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
 
-    pub fn new(cache_desc: &CacheDesc, start: *const u8,
+    pub fn new(cache_desc: &'a dyn MemoryScrubberCacheDesc<Cacheline>, start: *const u8,
         size: usize) -> Result<MemoryScrubber<Cacheline>, MemoryScrubberError> {
-        let iterator = MemoryScrubberIterator::new(&cache_desc, start, size)?;
+        let iterator = MemoryScrubberIterator::new(cache_desc, start, size)?;
         Ok(MemoryScrubber {
-            cache_desc: (*cache_desc).clone(),
+            cache_desc: cache_desc,
             start:      start,
             size:       size,
             iterator:   iterator,
         })
     }
 
+    // Scrub
     pub fn scrub(&mut self, n: usize) -> Result<(), MemoryScrubberError> {
         if (n % self.cache_desc.cacheline_size()) != 0 {
             return Err(MemoryScrubberError::UnalignedSize);
         }
 
+        // Convert to the number of cachelines to scrub
+        let n = n / self.cache_desc.cacheline_size();
+println!("Scrubbing {} cache lines", n);
+
         for _i in 0..n {
+            // If we don't already have an iterator, get a new one.
             let _p = match self.iterator.next() {
                 None => {
                     self.iterator =
-                        match MemoryScrubberIterator::new(&self.cache_desc,
+                        match MemoryScrubberIterator::new(self.cache_desc,
                         self.start, self.size) {
                         Err(e) => return Err(e),
                         Ok(iterator) => iterator,
@@ -130,8 +133,8 @@ impl<Cacheline> MemoryScrubber<Cacheline> {
 //              a multiple of the number cache lines in the cache.
 // addr_mask:   This mask divides the lower cacheline index and cache index
 //              information from the upper bits of an address.
-pub struct MemoryScrubberIterator<Cacheline> {
-    cache_desc: CacheDesc,
+pub struct MemoryScrubberIterator<'a, Cacheline> {
+    cache_desc: &'a dyn MemoryScrubberCacheDesc<Cacheline>,
     start:      *const Cacheline,
     size:       isize,
     index:      isize,
@@ -139,15 +142,15 @@ pub struct MemoryScrubberIterator<Cacheline> {
     addr_mask:  usize,
 }
 
-impl<Cacheline> MemoryScrubberIterator<Cacheline> {
+impl<'a, Cacheline> MemoryScrubberIterator<'a, Cacheline> {
 
     // Create a new MemoryScrubber.
     // start: pointer to the beginning of the memory area to be scrubbed. Must
     //      be a multiple of the cache line size.
     // size: number of bytes in the memory area to be scrubbed. Must be a
     //      multiple of the cache line size.
-    pub fn new(cache_desc: &CacheDesc, start: *const u8, size: usize) ->
-        Result<MemoryScrubberIterator<Cacheline>, MemoryScrubberError> {
+    pub fn new(cache_desc: &'a dyn MemoryScrubberCacheDesc<Cacheline>, start: *const u8, size: usize)
+        -> Result<MemoryScrubberIterator<Cacheline>, MemoryScrubberError> {
         let start_addr = start as Addr;
         if (start_addr % cache_desc.cacheline_size()) != 0 {
             return Err(MemoryScrubberError::UnalignedAddress);
@@ -162,13 +165,13 @@ impl<Cacheline> MemoryScrubberIterator<Cacheline> {
         }
 
         Ok(MemoryScrubberIterator {
-            cache_desc: (*cache_desc).clone(),
+            cache_desc: cache_desc,
             start:      start as *const Cacheline,
             size:       (size / cache_desc.cacheline_size()) as isize,
             index:      0,
             offset:     0,
-            addr_mask:  !((1 << (cache_desc.cacheline_width +
-                             cache_desc.cache_width)) - 1),
+            addr_mask:  !((1 << (cache_desc.cacheline_width() +
+                             cache_desc.cache_width())) - 1),
         })
     }
 
@@ -176,11 +179,11 @@ impl<Cacheline> MemoryScrubberIterator<Cacheline> {
     fn cache_index(&self, addr: *const Cacheline) -> isize {
         // Pull out the cache index corresponding the the starting address
         ((addr as Addr & !self.addr_mask) >>
-            self.cache_desc.cacheline_width) as isize
+            self.cache_desc.cacheline_width()) as isize
     }
 }
 
-impl<Cacheline> Iterator for MemoryScrubberIterator<Cacheline> {
+impl<Cacheline> Iterator for MemoryScrubberIterator<'_, Cacheline> {
     type Item = *const Cacheline;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -229,17 +232,39 @@ mod tests {
     const CACHELINE_WIDTH: usize = 6;
     const CACHE_WIDTH: usize = 10;
 
-    // Cache descriptor to pass to the memory scrubbing functions.
-    const CACHE_DESC: CacheDesc = CacheDesc {
-        cacheline_width:    CACHELINE_WIDTH,
-        cache_width:        CACHE_WIDTH,
-    };
-
     // ECCData - The data size used to compute the ECC
     // Cacheline - the data type of a cache line
     type ECCData = u64;
     type Cacheline = [u64; (1 << CACHELINE_WIDTH) / std::mem::size_of::<ECCData>()];
 
+    // TestCacheDesc - Description of the cache
+    // cacheline_width - Number of bits in the index into the cachline bytes
+    // cache_width - Number of bits of the cache index.
+    #[derive(Clone, Copy, Debug)]
+    pub struct TestCacheDesc {
+        cacheline_width:    usize,
+        cache_width:        usize,
+    }
+
+    // Cache descriptor to pass to the memory scrubbing functions.
+    const CACHE_DESC: TestCacheDesc = TestCacheDesc {
+        cacheline_width:    CACHELINE_WIDTH,
+        cache_width:        CACHE_WIDTH,
+    };
+
+    impl MemoryScrubberCacheDesc<Cacheline> for TestCacheDesc {
+        fn cacheline_width(&self) -> usize {
+            self.cacheline_width
+        }
+
+        fn cache_width(&self) -> usize {
+            self.cache_width
+        }
+
+        fn read_cacheline(&self, cacheline: *const Cacheline) {
+            println!("Read cacheline at {:x}", cacheline as usize);
+        }
+    }
 
     #[test]
     fn test_aligned() {
