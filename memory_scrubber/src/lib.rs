@@ -1,30 +1,54 @@
-// Main memory scrubber function callable from C
+// This is code for a memory scrubber.
 //
-// When computers are used in environments that can cause a large number of
-// memory bits to assume incorrect values, error correction code (ECC)
-// hardware allows bad bits to be detected and corrected. This works well for
-// memory which is frequently used because the checking and correction is done
-// for each write. Memory which is rarely used, however, may accumulate an
-// ever increasing number of errors. ECC is only capable of correcting a limited
-// number of bits. If memory has more errors than ECC can correct, a hard
-// fault will occur.
+// What is a memory scrubber and why would you use one?
 //
-// The definitions in this file are intended to counter this problem. It should
-// be used to scan all of memory on a periodic basis. If this is done
-// frequently enough, the latent errors that have built up will be corrected
-// before exceeding the number than can be corrected. The process of
-// periodically scanning all of memory is referred to as memory scrubbing.
+// A memory scrubber is simply a piece of hardware or software that reads all
+// bytes from a section of memory, usually from all of memory. This is an
+// implementation of a software memory scrubber. When a processor reads from
+// memory protected by an error correction code (ECC), it checks to see if
+// there are errors in the piece of memory it has read. If so, in hardware or
+// software, the ECC is used to correct the errors and the corrected value
+// used to replace the bad value.
 //
-// Although memory scrubbing is a relatively fast operation, it still take
-// more time than is available as a single block on a given system. Because
-// of this, the scrubbing operation is given the number of bytes that should
-// be scrubbed. It will start from where it left off and scan the specified
-// number of bytes.
+// ECCs are limited in the number of errors they can correct. These errors
+// generally accumulate over time. So long as memory is read often enough,
+// correction is applied with enough frequency that the number of errors
+// stays within the bounds of what is correctable. If, however, a piece of
+// memory is rarely accessed, it can accumulate multiple errors. When that
+// memory is eventually used, it will not be possible to determine the corrected
+// value and a fatal error will result. This is where a memory scrubber comes
+// in.
 //
-// The number of bytes to be scrubbed at a time is a system-dependent
-// parameter, but the overall rate at which memory should be scrubbed depends
-// on the likelihood of a given bit becoming bad and the number of bits that
-// can be corrected by the ECC.
+// In general, memory is scrubbed at a rate high enough that the number of
+// accumulated errors remains low enough that the number of uncorrectable
+// errors is extremely low. Since it isn't possible to predict which areas of
+// memory are read frequently enough to avoid error accumulation, the usual
+// practice is to scan all of memory. With modern systems, this can be quite be
+// a large amount of work and the scrubbing work is broken into smaller pieces
+// to avoid any significant amount of performance impact.
+//
+// The choice of how often memory is scrubbed depends on:
+// o    The probability that an uncorrectable number of errors will accumulate
+//      in a particular section
+// o    How many sections of memory are present in the system
+// o    The goal for the probability that a fault due to an uncorrectable
+//      number of errors anywhere in memory will occur.
+//
+// Choosing how the scrubbing work is divided into smaller piece depends on
+// many implementation details, like:
+// o    Will the scrubbing be done with preemption blocked?
+// o    How long does it take to scrub each section of memory?
+// o    What is the overhead of entering and leaving the scrubbing code each
+//      time it is run?
+//
+// One key performance impact of memory scrubbing is that read memory will
+// evict the memory cache contents being used by other software on the system.
+// When that software resumes, it will have to re-read all the data it wants
+// to use, which can cause a substantial performance impact all at once.  This
+// code is written to perform its reads all of memory corresponding to a
+// single cache line at a time. If memory scrubbing is broken into smaller
+// chunks, data will be evicted from only a few cache lines each time scrubbing
+// is done, producing a more even performance impact.
 
 use std::cell::RefCell;
 use std::iter;
@@ -68,7 +92,7 @@ pub trait CacheDescBase<Cacheline> {
     // as many bytes as are in a cache line. The implementation should do
     // whatever is necessary to ensure all bytes are read in order to trigger
     // a fault if any bits have an unexpected value. So long as the number
-    // of bad bits is small enough (hardware-dependent), corrected data should
+    // of bad bits is small enough (ECC-dependent), corrected data should
     // be written back to that location, preventing the accumulation of so many
     // bad bits that the correct value cannot be determined.
     fn read_cacheline(&mut self, p: *const Cacheline);
@@ -149,7 +173,10 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
         })
     }
 
-    // Scrub
+    // Scrub some number of bytes. This could be larger than the total memory
+    // area, in which case the scrubbing will start again at the beginning
+    // of the memory area, but it seems unlikely that this would be useful.
+    // n - Number of bytes to scrub
     pub fn scrub(&mut self, n: usize) -> Result<(), Error> {
         let cacheline_size = {
             self.cache_desc.clone().borrow().cacheline_size()
@@ -159,10 +186,8 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
             return Err(Error::UnalignedSize);
         }
 
-println!("cache at {:x}", self.start as usize);
         // Convert to the number of cachelines to scrub
         let n = n / cacheline_size;
-println!("Scrubbing {} cache lines", n);
 
         for _i in 0..n {
             // If we don't already have an iterator, get a new one.
@@ -179,7 +204,7 @@ println!("Scrubbing {} cache lines", n);
                 Some(p) => p,
             };
 
-            self.cache_desc.borrow_mut().read_cacheline(p);
+            self.cache_desc.clone().borrow_mut().read_cacheline(p);
         }
         
         Ok(())
@@ -214,7 +239,11 @@ impl<'a, Cacheline> Iterator<'a, Cacheline> {
     // start: pointer to the beginning of the memory area to be scrubbed. Must
     //      be a multiple of the cache line size.
     // size: number of bytes in the memory area to be scrubbed. Must be a
-    //      multiple of the cache line size.
+    //      multiple of the cache line size. There is no way to specify the
+    //      full address range starting at zero. Simply split memory into two
+    //      pieces and alternate scrubbing them.
+    //
+    // Returns: Ok(Iterator) on success, Err(Error) on failure
     pub fn new(cache_desc: CacheDesc<'a, Cacheline>,
         start: *const u8, size: usize) -> Result<Iterator<'a, Cacheline>, Error> {
         let start_addr = start as Addr;
@@ -349,11 +378,8 @@ mod tests {
     // TOUCHING_CACHE_WIDTH - number of bits used as a cache line index in the
     //  cache
     const TOUCHING_CACHELINE_WIDTH: usize = 6;
-    const TOUCHING_CACHELINE_SIZE: usize = 1 << TOUCHING_CACHELINE_WIDTH;
     const TOUCHING_CACHE_WIDTH: usize = 10;
     const TOUCHING_CACHE_SIZE: usize = 1 << TOUCHING_CACHE_WIDTH;
-    const TOUCHING_CACHE_AREA_SIZE: usize =
-        1 << (TOUCHING_CACHELINE_WIDTH + TOUCHING_CACHE_WIDTH);
     const TOUCHING_CACHE_NUM_TOUCHED: usize = 3;
 
     // This is the number of cache line-sized areas we use for testing
@@ -399,11 +425,7 @@ mod tests {
     fn test_unaligned_address() {
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
         let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &mut dyn CacheDescBase<Cacheline>));
-//        let mut cache_desc =
-//            Rc::new(RefCell::new(cd)).clone();
-//            Rc::new(RefCell::new(BASIC_CACHE_DESC as CacheDescBase<Cacheline>.clone()));
         let size = BASIC_CACHE_AREA_SIZE + BASIC_CACHE_AREA_SIZE;
-println!("size {}", size);
         let mem_area: Vec<u8> = vec![0; size];
         let p = mem_area.as_ptr() as *const u8;
         let (p, size) = match align_area(cache_desc.clone(), p, size) {
@@ -429,7 +451,6 @@ println!("size {}", size);
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
         let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &mut dyn CacheDescBase<Cacheline>));
         let size = BASIC_CACHE_AREA_SIZE + BASIC_CACHE_AREA_SIZE;
-println!("size {}", size);
         let mem_area: Vec<u8> = vec![0; size];
         let p = mem_area.as_ptr() as *const u8;
         let (p, size) = match align_area(cache_desc.clone(), p, size) {
@@ -452,7 +473,6 @@ println!("size {}", size);
         let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &mut dyn CacheDescBase<Cacheline>));
         // Make sure we have at least a cache size
         let size = BASIC_CACHE_AREA_SIZE + BASIC_CACHE_AREA_SIZE;
-println!("size {}", size);
         let mem_area: Vec<u8> = vec![0; size];
         let p = mem_area.as_ptr() as *const u8;
         let (p, _size) = match align_area(cache_desc.clone(), p, size) {
@@ -488,7 +508,9 @@ println!("size {}", size);
             Ok(scrubber) => scrubber,
         };
 
-        match memory_scrubber.scrub(cache_desc.borrow().cacheline_size() * 10) {
+        let cacheline_size = cache_desc.borrow().cacheline_size();
+
+        match memory_scrubber.scrub(cacheline_size * 10) {
             Err(e) => panic!("scrub failed: {}", e),
             Ok(_) => println!("scrub succeeded!"),
         };
@@ -496,6 +518,13 @@ println!("size {}", size);
 
     // Verify that all specified locations are scrubbed on locations outside
     // the requested are are not touched.
+
+    // Test scrubbing:
+    // o    Zero cache lines
+    // o    One cache line
+    // o    Fifty cache lines
+    // o    The entire size of the cache area
+    // o    Double the cache area size plus fifty (test wrapping)
     #[test]
     fn test_touching() {
         let touching_cache_desc = &mut TOUCHING_CACHE_DESC.clone();
@@ -517,7 +546,9 @@ println!("size {}", size);
             Ok(scrubber) => scrubber,
         };
 
-        match memory_scrubber.scrub(cache_desc.borrow().cacheline_size() * 10) {
+        let cacheline_size = cache_desc.borrow().cacheline_size();
+
+        match memory_scrubber.scrub(cacheline_size * 10) {
             Err(e) => panic!("scrub failed: {}", e),
             Ok(_) => println!("scrub succeeded!"),
         };
@@ -550,10 +581,8 @@ println!("size {}", size);
         // be incremented as much as cache_area_size - 1 and additional memory
         // may need to be allocated to ensure enough is available to perform the
         // tests.
-println!("(p, size) {:?}", (p, size));
         let cache_area_size = cache_desc.borrow().cache_size() *
             cache_desc.borrow().cacheline_size();
-println!("cache_area_size {}", cache_area_size);
 
         // Compute the number of bytes to add to p to reach the next address
         // that is a multiple of cache_area_size;
@@ -563,14 +592,12 @@ println!("cache_area_size {}", cache_area_size);
         }
 
         let p = unsafe { p.offset(p_offset as isize) };
-println!("p {:?}", p);
 
         // We just gobbled up p_offset bytes at the start of the memory area
         // and so need to decrement the size accordingly. Then we align the
         // size to a multiple of the c
         let adjusted_size = size - p_offset;
         let size = adjusted_size - (adjusted_size % cache_area_size);
-println!("size {}", size as usize);
         if size == 0 {
             return None;
         }
