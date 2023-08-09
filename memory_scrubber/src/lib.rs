@@ -179,7 +179,7 @@ println!("Scrubbing {} cache lines", n);
                 Some(p) => p,
             };
 
-            (&mut *self.cache_desc.borrow_mut()).read_cacheline(p);
+            self.cache_desc.borrow_mut().read_cacheline(p);
         }
         
         Ok(())
