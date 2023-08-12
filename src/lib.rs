@@ -679,15 +679,15 @@ mod tests {
             Ok(scrubber) => scrubber,
         };
 
-        match memory_scrubber.scrub(n) {
-            Err(e) => panic!("scrub failed: {}", e),
-            Ok(_) => println!("scrub succeeded!"),
+        if let Err(e) = memory_scrubber.scrub(n) {
+            panic!("scrub failed: {}", e);
         };
 
         let vec_mutex = tcd.n_reads.unwrap().clone();
         let vec = vec_mutex.lock().unwrap();
         let n_reads = vec.as_ref();
         touching_verify_scrub(memory_scrubber, n_reads, n / cacheline_size);
+        assert!(touching_cache_desc.mem.as_ref().unwrap().mem_area.len() != 0);
     }
 
     // Set up a new TouchingCacheDesc
