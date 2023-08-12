@@ -687,7 +687,10 @@ mod tests {
         let vec = vec_mutex.lock().unwrap();
         let n_reads = vec.as_ref();
         touching_verify_scrub(memory_scrubber, n_reads, n / cacheline_size);
-        assert!(touching_cache_desc.mem.as_ref().unwrap().mem_area.len() != 0);
+
+        // This is used to keep mem_area from being deallocated before we're
+        // done
+        assert_ne!(touching_cache_desc.mem.as_ref().unwrap().mem_area.len(), 0);
     }
 
     // Set up a new TouchingCacheDesc
