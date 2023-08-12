@@ -81,12 +81,22 @@
 //      Since many systems have more than one level of cache memory, note
 //      that this should be the longest cache line in in the system.
 //
-// 3.   Create a structure that holds definitions of your cache. This is
-//      an implementation of CacheDesc. In most cases, the only things you
-//      need to define are the following:
+// 3.   Determine the address and size of the memory area which you want
+//      to scrub. Call these my_addr and my_size. They must be a multiple of
+//      the cache size, which is the product of the number of cache lines and
+//      the number of bytes in a single way of a cache line. If your cache
+//      doesn't implement ways (unlikely), this is simply the number of bytes
+//      in a cache line.
 //
-//      a.  A function that returns the number of bits in the cache index
-//          portion of an address. For example:
+// 3.   Create a structure that holds definitions of your cache. This is
+//      an implementation of the CacheDesc trait. For example purposes, call
+//      this MyCacheDesc. In most cases, the default functions provide
+//      everything you need, so only things you need to define are the
+//      following:
+//
+//      a.  The cache_index_width() function, which returns the number of
+//          bits in the cache index portion of an address. For example, a
+//          ten-bit wide cache index would be implemented by:
 //
 //              fn cache_index_width(&self) -> usize {
 //                  10
@@ -106,6 +116,20 @@
 //          read when a single element is read. Since any memory not read
 //          will not be checked for errors, it is important that this function
 //          implement a full cache line read.
+//
+// 4.   Create a new MemoryScrubber:
+//
+//          let scrubber = match MemoryScrubber<MyCacheline>::new(MyCacheDesc,
+//              my_ptr, my_size) {
+//              Err(e) => ...
+//
+// 5.   Scrub some number of bytes. You could scrub a quarter of the memory area
+//      with:
+//
+//          match scrubber.scrub(size / 4) {
+//              Err(e) => ...
+//
+//      The size passed to scrub() must be a multiple of the cache line size.
 
 use std::cell::RefCell;
 use std::iter;
@@ -159,39 +183,6 @@ pub trait CacheDescBase<Cacheline> {
 
 type CacheDesc<'a, Cacheline> =
     Rc<RefCell<&'a dyn CacheDescBase<Cacheline>>>;
-
-/*
-#[repr(C)]
-pub struct CMemoryScrubberResult {
-    result: MemoryScrubberResults,
-    memory_scrubber: CMemoryScrubber,
-}
-
-#[repr(C)]
-pub struct CMemoryScrubber {
-    start:  *const ECCData,
-    size:   usize,
-    offset: usize,
-}
-
-#[no_mangle]
-pub extern "C" fn memory_scrubber_new(start: *const ECCData, size: usize) ->
-    CMemoryScrubber {
-    let memory_scrubber = MemoryScrubber::new(start, size);
-    match memory_scrubber {
-        MemoryScrubber::new(start, size)
-            .c_memory_scrubber
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn memory_scrubber_scrub(memory_scrubber: CMemoryScrubber,
-    n: usize) -> MemoryScrubberResults {
-    MemoryScrubber {
-        c_memory_scrubber: memory_scrubber,
-    }.scrub(n);
-}
-*/
 
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum Error {
