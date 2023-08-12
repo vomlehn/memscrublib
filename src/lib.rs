@@ -49,9 +49,67 @@
 // single cache line at a time. If memory scrubbing is broken into smaller
 // chunks, data will be evicted from only a few cache lines each time scrubbing
 // is done, producing a more even performance impact.
+//
+// This code assumes that an address can be broken into three parts:
+//
+//       _____________________________________________________________
+//      |                                |               |            |
+//      |     Address upper bits         |  Cache index  | Cache line |
+//      |                                |               |   index    |
+//      |________________________________|_______________|____________|
+//
+// The cache index is the index of the cache line in the cache. The cache
+// line index is the index of a particular byte in the cache line indicated
+// by the cache index. The upper bits of the address might be used to select
+// a specific way within the cache line specified by the cache index but don't
+// usually otherwise participate in cache operations.
+//
+// To use this, it recommended you do the following:
+//
+// 1.   Determine a suitable data type to represent the size of object that
+//      is used by the unit the computes the ECC. This is probably either u32
+//      or u64, and we'll call it ECCData here, though you can call it anything
+//      you wish.
+//
+// 2.   Define the structure of a cache line by implementing Cacheline for
+//      the particular layout for your processor. We'll call the structure
+//      MyCacheline. It usually the case that cache lines are arrays of ECCData
+//      items, such as:
+//
+//          type MyCacheline = [u64; 8];
+//
+//      Since many systems have more than one level of cache memory, note
+//      that this should be the longest cache line in in the system.
+//
+// 3.   Create a structure that holds definitions of your cache. This is
+//      an implementation of CacheDesc. In most cases, the only things you
+//      need to define are the following:
+//
+//      a.  A function that returns the number of bits in the cache index
+//          portion of an address. For example:
+//
+//              fn cache_index_width(&self) -> usize {
+//                  10
+//              }
+//
+//      b.  A function that will cause all bytes in a cache line to be read
+//          and checked for a correct ECC.  If the entire cache is read when
+//          any element is read, this could be:
+//
+//              fn read_cacheline(&self, cacheline: *const Cacheline) {
+//                  let _dummy = unsafe {
+//                      ptr::read(&((*cacheline)[0]) as *const _);
+//                  };
+//              }
+//
+//          It is possible that the longest cache line will not be entirely
+//          read when a single element is read. Since any memory not read
+//          will not be checked for errors, it is important that this function
+//          implement a full cache line read.
 
 use std::cell::RefCell;
 use std::iter;
+use std::ptr;
 use std::rc::Rc;
 use std::sync::{Mutex, Arc};
 use thiserror::Error;
@@ -96,11 +154,11 @@ pub trait CacheDescBase<Cacheline> {
     // of bad bits is small enough (ECC-dependent), corrected data should
     // be written back to that location, preventing the accumulation of so many
     // bad bits that the correct value cannot be determined.
-    fn read_cacheline(&mut self, p: *const Cacheline);
+    fn read_cacheline(&self, p: *const Cacheline);
 }
 
 type CacheDesc<'a, Cacheline> =
-    Rc<RefCell<&'a mut dyn CacheDescBase<Cacheline>>>;
+    Rc<RefCell<&'a dyn CacheDescBase<Cacheline>>>;
 
 /*
 #[repr(C)]
@@ -150,6 +208,11 @@ pub enum Error {
     CachelineSizeMismatch,
 }
 
+// Memory scrubber
+// cache_desc - Description of the cache
+// start - Virtual address of memory to be scrubbed
+// size - Number of bytes in the memory area being scrubbed
+// iterator - Iterator used to walk through the memory being scrubbed
 struct MemoryScrubber<'a, Cacheline> {
     cache_desc: CacheDesc<'a, Cacheline>,
     start:      *const u8,
@@ -159,6 +222,10 @@ struct MemoryScrubber<'a, Cacheline> {
 
 impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
 
+    // Create a new memory scrubber
+    // cache_desc - Description of the cache
+    // start - Virtual address of memory being scrubbed
+    // size - Number of bytes in the area being scrubbed
     pub fn new(cache_desc: CacheDesc<'a, Cacheline>,
         start: *const u8, size: usize) ->
         Result<MemoryScrubber<'a, Cacheline>, Error> {
@@ -180,7 +247,7 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
     // n - Number of bytes to scrub
     pub fn scrub(&mut self, n: usize) -> Result<(), Error> {
         let cacheline_size = {
-            self.cache_desc.clone().borrow().cacheline_size()
+            self.cache_desc.borrow().cacheline_size()
         };
 
         if (n % cacheline_size) != 0 {
@@ -188,9 +255,9 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
         }
 
         // Convert to the number of cachelines to scrub
-        let n = n / cacheline_size;
+        let n_cachelines = n / cacheline_size;
 
-        for _i in 0..n {
+        for _i in 0..n_cachelines {
             // If we don't already have an iterator, get a new one.
             let p = match self.iterator.next() {
                 None => {
@@ -205,7 +272,7 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
                 Some(p) => p,
             };
 
-            self.cache_desc.clone().borrow_mut().read_cacheline(p);
+            self.cache_desc.borrow().read_cacheline(p);
         }
         
         Ok(())
@@ -228,9 +295,9 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
 pub struct Iterator<'a, Cacheline> {
     cache_desc: CacheDesc<'a, Cacheline>,
     start:      *const Cacheline,
-    size:       isize,
-    index:      isize,
-    offset:     isize,
+    size:       usize,
+    index:      usize,
+    offset:     usize,
     addr_mask:  usize,
 }
 
@@ -280,7 +347,7 @@ impl<'a, Cacheline> Iterator<'a, Cacheline> {
         Ok(Iterator {
             cache_desc: cache_desc,
             start:      start as *const Cacheline,
-            size:       (size / cacheline_size) as isize,
+            size:       (size / cacheline_size) as usize,
             index:      0,
             offset:     0,
             addr_mask:  !(cache_size - 1),
@@ -288,10 +355,10 @@ impl<'a, Cacheline> Iterator<'a, Cacheline> {
     }
 
     // Return the cache index for the given address
-    fn cache_index(&self, addr: *const Cacheline) -> isize {
+    fn cache_index(&self, addr: *const Cacheline) -> usize {
         // Pull out the cache index corresponding the the starting address
         ((addr as Addr & !self.addr_mask) >>
-            self.cache_desc.borrow().cacheline_width()) as isize
+            self.cache_desc.borrow().cacheline_width()) as usize
     }
 }
 
@@ -305,7 +372,7 @@ impl<Cacheline> iter::Iterator for Iterator<'_, Cacheline> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             // If we've scanned all cache lines, we're finished.
-            if self.index > self.size {
+            if self.index == self.cache_desc.borrow().cache_lines() as usize {
                 return None;
             }
 
@@ -321,14 +388,14 @@ impl<Cacheline> iter::Iterator for Iterator<'_, Cacheline> {
             //
             // To this is added the number of cache lines in the cache. This is
             // the offset, in cache lines, from the starting address.
-            let base_offset = self.cache_index(self.start) +
-                self.index as isize + self.offset;
+            let offset = self.cache_index(self.start) + self.index +
+                self.offset;
 
-            if base_offset < self.size {
-                self.offset += self.cache_desc.borrow().cache_lines() as isize;
+            if offset < self.size {
                 let res = unsafe {
-                    self.start.offset(base_offset)
+                    self.start.offset(offset as isize)
                 };
+                self.offset += self.cache_desc.borrow().cache_lines();
                 return Some(res);
             }
             self.index += 1;
@@ -342,20 +409,21 @@ impl<Cacheline> iter::Iterator for Iterator<'_, Cacheline> {
 mod tests {
     use super::*;
 
-    // ECCData - The data size used to compute the ECC
-    type ECCData = u64;
+    // ECCData - The data size used to compute the ECC for basic tests
+    type BasicECCData = u64;
 
     // Cacheline - the data type of a cache line
-    type Cacheline =
-        [u64; (1 << BASIC_CACHELINE_WIDTH) / std::mem::size_of::<ECCData>()];
+    type BasicCacheline =
+        [u64; (1 << BASIC_CACHELINE_WIDTH) / std::mem::size_of::<BasicECCData>()];
 
     // Cache characteristics
     // BASIC_CACHELINE_WIDTH - number of bits required to index a byte in a
-    //  cache line
-    // BASIC_CACHE_INDEX_WIDTH - number of bits used as a cache line index in the
-    //  cache
+    //      cache line
+    // BASIC_CACHE_INDEX_WIDTH - number of bits used as a cache line index in
+    //      the cache
     const BASIC_CACHELINE_WIDTH: usize = 6;
     const BASIC_CACHE_INDEX_WIDTH: usize = 10;
+
     const BASIC_CACHE_SIZE: usize =
         1 << (BASIC_CACHELINE_WIDTH + BASIC_CACHE_INDEX_WIDTH);
 
@@ -372,12 +440,15 @@ mod tests {
         cache_index_width:        BASIC_CACHE_INDEX_WIDTH,
     };
 
-    impl CacheDescBase<Cacheline> for BasicTestCacheDesc {
+    impl CacheDescBase<BasicCacheline> for BasicTestCacheDesc {
         fn cache_index_width(&self) -> usize {
             self.cache_index_width
         }
 
-        fn read_cacheline(&mut self, cacheline: *const Cacheline) {
+        fn read_cacheline(&self, cacheline: *const BasicCacheline) {
+            let _dummy = unsafe {
+                ptr::read(&((*cacheline)[0]) as *const _)
+            };
         }
     }
 
@@ -386,44 +457,60 @@ mod tests {
     //  cache line
     // TOUCHING_CACHE_INDEX_WIDTH - number of bits used as a cache line index
     //  in the cache
+    // TOUCHING_CACHE_LINES - number of cache lines
+/* FIXME: restore this
     const TOUCHING_CACHELINE_WIDTH: usize = 6;
     const TOUCHING_CACHE_INDEX_WIDTH: usize = 10;
+    const TOUCHING_CACHE_LINES: usize = 1 << TOUCHING_CACHE_INDEX_WIDTH;
+*/
+    const TOUCHING_CACHELINE_WIDTH: usize = 3;
+    const TOUCHING_CACHE_INDEX_WIDTH: usize = 1;
     const TOUCHING_CACHE_LINES: usize = 1 << TOUCHING_CACHE_INDEX_WIDTH;
 
     // Number of cache footprints we use for testing
     const TOUCHING_CACHE_NUM_TOUCHED: usize = 3;
 
     // Number of cachelines we actually expect to touch
-    const TOUCHING_SIZE: usize =
+    const TOUCHING_SANDBOX_SIZE: usize =
         TOUCHING_CACHE_LINES * TOUCHING_CACHE_NUM_TOUCHED;
 
-    // This is the number of cache line-sized areas we use for testing
-    const TOUCHING_SANDBOX_SIZE: usize = TOUCHING_CACHE_LINES + // For checking before the area we touch
-        TOUCHING_SIZE +
-        TOUCHING_CACHE_LINES; // For checking after the area we touch
-    // Cacheline - the data type of a cache line
-    type TouchingCacheline =
-        [u64; (1 << TOUCHING_CACHELINE_WIDTH) / std::mem::size_of::<ECCData>()];
+    // TouchingECCData - The data size used to compute the ECC for basic tests
+/* FIXME: restore this
+    type TouchingECCData = u64;
+ */
+    type TouchingECCData = u16;
 
-    // This allows passing a *const pointer
+    // TouchingCacheline - the data type of a cache line
+    type TouchingCacheline =
+        [u64; (1 << TOUCHING_CACHELINE_WIDTH) / std::mem::size_of::<TouchingECCData>()];
+
+    // Description of memory that is read into by the read_cacheline() function.
+    // This keeps the actually allocation together with the pointer into that
+    // allocation so that things go out of scope at the same time.
+    //
+    // mem_area - Vec<u8> of elements that can be read by read_cacheline()
+    // p - Cache size-aligned point with at least size readable elements
+    // size - Number of bytes after p that can be read
     #[derive(Clone, Debug)]
-    struct TouchingPtr {
-        ptr:    *const TouchingCacheline,
+    struct TouchingMem {
+        mem_area:   Vec<u8>,
+        ptr:        *const u8,
+        size:       usize,
     }
 
     // This clues the compiler in that I know what I'm doing by having a
     // *const pointer in the struct
-    unsafe impl Sync for TouchingPtr {}
+    unsafe impl Sync for TouchingMem {}
 
     // TouchingCacheDesc - Description of the cache for basic tests
     // cacheline_width - Number of bits in the index into the cachline bytes
-    // cache_index_width - Number of times this cacheline was hit during the
+    // cache_index_width - Number of times this cacheline was iit during the
     //      scrub
     #[derive(Clone, Debug)]
     pub struct TouchingCacheDesc {
         cache_index_width:  usize,
-        hit:                Option<Arc<Mutex<Vec<u32>>>>,
-        p:                  TouchingPtr,
+        n_reads:            Option<Arc<Mutex<Vec<u32>>>>,
+        mem:                Option<TouchingMem>,
     }
 
     // This clues the compiler in that I know what I'm doing by having a
@@ -433,8 +520,8 @@ mod tests {
     // Cache descriptor to pass to the memory scrubbing functions.
     static TOUCHING_CACHE_DESC: TouchingCacheDesc = TouchingCacheDesc {
         cache_index_width:  TOUCHING_CACHE_INDEX_WIDTH,
-        hit:                None,
-        p:                  TouchingPtr { ptr: std::ptr::null() },
+        n_reads:            None,
+        mem:                None,
     };
 
     impl CacheDescBase<TouchingCacheline> for TouchingCacheDesc {
@@ -442,15 +529,20 @@ mod tests {
             self.cache_index_width
         }
 
-        fn read_cacheline(&mut self, cacheline: *const TouchingCacheline) {
-println!("Testing read cacheline at {:x}", cacheline as usize);
-            let offset = (self.p.ptr as usize - cacheline as usize) /
+        fn read_cacheline(&self, cacheline: *const TouchingCacheline) {
+            // First, actually do the read
+            let _dummy = unsafe {
+                ptr::read(&((*cacheline)[0]) as *const _)
+            };
+
+            // Now update the bookkeeping data so we verify we did the right
+            // thing
+            let cacheline_offset =
+                (cacheline as usize - self.mem.as_ref().unwrap().ptr as usize) /
                 self.cacheline_size();
-println!("offset {}", offset);
-            let i = self.cache_lines() + offset;
-println!("hit {:?}", self.hit.as_ref().unwrap().lock().unwrap().as_ptr());
-println!("i {:?}", i);
-            self.hit.as_ref().unwrap().lock().unwrap()[i] += 1;
+            let i = self.cache_lines() + cacheline_offset;
+            let mut n_reads = self.n_reads.as_ref().unwrap().lock().unwrap();
+            n_reads[i] += 1;
         }
     }
 
@@ -459,22 +551,14 @@ println!("i {:?}", i);
     #[test]
     fn test_unaligned_address() {
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
-        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &mut dyn CacheDescBase<Cacheline>));
-        let size = BASIC_CACHE_SIZE + BASIC_CACHE_SIZE;
-        let mem_area: Vec<u8> = vec![0; size];
-        let p = mem_area.as_ptr() as *const u8;
-        let (p, size) = match align_area(cache_desc.borrow().cache_lines(),
-            cache_desc.borrow().cacheline_size(), p, size) {
-            None => panic!("Bad aligned size"),
-            Some((p, size)) => (p, size),
-        };
-
-        let p = unsafe {
-            p.offset(1)
+        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &dyn CacheDescBase<BasicCacheline>));
+        let mut mem = alloc_mem::<BasicCacheline>(basic_cache_desc, BASIC_CACHE_SIZE);
+        mem.ptr = unsafe {
+            mem.ptr.offset(1)
         };
 
         let memory_scrubber =
-            Iterator::<Cacheline>::new(cache_desc, p, size);
+            Iterator::<BasicCacheline>::new(cache_desc, mem.ptr, mem.size);
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
             Error::UnalignedAddress);
@@ -485,19 +569,11 @@ println!("i {:?}", i);
     #[test]
     fn test_unaligned_size() {
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
-        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &mut dyn CacheDescBase<Cacheline>));
-        let size = BASIC_CACHE_SIZE + BASIC_CACHE_SIZE;
-        let mem_area: Vec<u8> = vec![0; size];
-        let p = mem_area.as_ptr() as *const u8;
-        let (p, size) = match align_area(cache_desc.borrow().cache_lines(),
-            cache_desc.borrow().cacheline_size(), p, size) {
-            None => panic!("Bad aligned size"),
-            Some((p, size)) => (p, size),
-        };
-        let size = size - 1;
+        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &dyn CacheDescBase<BasicCacheline>));
+        let mem = alloc_mem::<BasicCacheline>(basic_cache_desc, BASIC_CACHE_SIZE);
 
         let memory_scrubber =
-            Iterator::<Cacheline>::new(cache_desc, p, size);
+            Iterator::<BasicCacheline>::new(cache_desc, mem.ptr, mem.size - 1);
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
             Error::UnalignedSize);
@@ -507,20 +583,11 @@ println!("i {:?}", i);
     #[test]
     fn test_zero_size() {
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
-        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &mut dyn CacheDescBase<Cacheline>));
-        // Make sure we have at least a cache size
-        let size = BASIC_CACHE_SIZE + BASIC_CACHE_SIZE;
-        let mem_area: Vec<u8> = vec![0; size];
-        let p = mem_area.as_ptr() as *const u8;
-        let (p, _size) = match align_area(cache_desc.borrow().cache_lines(),
-            cache_desc.borrow().cacheline_size(), p, size) {
-            None => panic!("Bad aligned size"),
-            Some((p, size)) => (p, size),
-        };
-        let size = 0;
+        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &dyn CacheDescBase<BasicCacheline>));
+        let mem = alloc_mem::<BasicCacheline>(basic_cache_desc, BASIC_CACHE_SIZE);
 
         let memory_scrubber =
-            Iterator::<Cacheline>::new(cache_desc, p, size);
+            Iterator::<BasicCacheline>::new(cache_desc, mem.ptr, 0);
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
             Error::ZeroSize);
@@ -530,29 +597,23 @@ println!("i {:?}", i);
     #[test]
     fn test_aligned() {
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
-        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &mut dyn CacheDescBase<Cacheline>));
-        let size = cache_desc.borrow().cacheline_size() *
-            cache_desc.borrow().cache_lines() * 14;
-        let mem_area: Vec<u8> = vec![0; size];
-        let p = mem_area.as_ptr() as *const u8;
-        let (p, size) = match align_area(cache_desc.borrow().cache_lines(),
-            cache_desc.borrow().cacheline_size(), p, size) {
-            None => panic!("Bad aligned size"),
-            Some((p, size)) => (p, size),
-        };
+        let cache_desc = Rc::new(RefCell::new(basic_cache_desc as &dyn CacheDescBase<BasicCacheline>));
+        let mem = alloc_mem::<BasicCacheline>(basic_cache_desc,
+            basic_cache_desc.cacheline_size() *
+            basic_cache_desc.cache_lines() * 14);
 
         let mut memory_scrubber =
-            match MemoryScrubber::<Cacheline>::new(cache_desc.clone(), p, size) {
+            match MemoryScrubber::<BasicCacheline>::new(cache_desc.clone(),
+                mem.ptr, mem.size) {
             Err(e) => panic!("MemoryScrubber::new() failed {}", e),
             Ok(scrubber) => scrubber,
         };
 
         let cacheline_size = cache_desc.borrow().cacheline_size();
 
-        match memory_scrubber.scrub(cacheline_size * 10) {
-            Err(e) => panic!("scrub failed: {}", e),
-            Ok(_) => println!("scrub succeeded!"),
-        };
+        if let Err(e) = memory_scrubber.scrub(cacheline_size * 10) {
+            panic!("scrub failed: {}", e);
+        }
     }
 
     // Verify that all specified locations are scrubbed and locations outside
@@ -566,188 +627,176 @@ println!("i {:?}", i);
     // o    Double the cache area size plus fifty (test wrapping)
     #[test]
     fn test_touch_zero() {
-        let scrubbable = TOUCHING_SIZE * TOUCHING_CACHE_DESC.cacheline_size();
-        test_scrubber(&[0], &[(0, scrubbable, 0)]);
+        let first_area = 0;
+        test_scrubber(first_area);
     }
 
     #[test]
     fn test_touch_one() {
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
-        let scrubbable = (TOUCHING_SIZE - 1) * cacheline_size;
-        test_scrubber(&[cacheline_size],
-            &[(0, cacheline_size, 1), (cacheline_size, scrubbable, 0)]);
+        let first_area = cacheline_size;
+        test_scrubber(first_area);
+    }
+
+    #[test]
+    fn test_touch_many() {
+        const MANY: usize = 50;
+        let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
+        let first_area = cacheline_size * MANY;
+        test_scrubber(first_area);
+    }
+
+    #[test]
+    fn test_touch_all() {
+        let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
+        let first_area = cacheline_size * TOUCHING_SANDBOX_SIZE;
+        test_scrubber(first_area);
+    }
+
+    #[test]
+    fn test_touch_double_all() {
+        let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
+        let first_area = 2 * cacheline_size * TOUCHING_SANDBOX_SIZE;
+        test_scrubber(first_area);
+    }
+
+    #[test] #[ignore]
+    fn test_touch_many_many() {
+        const MANY: usize = 72;
+        let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
+        let first_area = 5 * cacheline_size * TOUCHING_SANDBOX_SIZE + MANY;
+        test_scrubber(first_area);
     }
 
     // Test support function that scrubs a section of memory, then verifies that
     // things were properly referred.
-    // scrubs - description of regions to scrub: (start, length), where start
-    //      is a byte offset from the beginning of the memory area and
-    //      length is the number of byte to scrub. Both must be a multiple of
-    //      the cacheline size
-    // expecteds - expected values in the touching area
-    fn test_scrubber(scrubs: &[usize],
-        expecteds: &[(usize, usize, u32)]) {
-        let mut touching_cache_desc = TOUCHING_CACHE_DESC.clone();
-        touching_cache_desc.hit = Some(Arc::new(Mutex::new(vec![0;
-            TOUCHING_CACHE_LINES + TOUCHING_SIZE + TOUCHING_CACHE_LINES])));
-        let alloc = match touching_alloc(&touching_cache_desc) {
-            Err(e) => panic!("Could not allocation touching descriptor: {}", e),
-            Ok(alloc) => alloc,
-        };
-        touching_cache_desc.p =
-            TouchingPtr { ptr: alloc.0 as *const TouchingCacheline, };
-println!("p is {:?}", alloc.0);
-/*
-        touching_cache_desc.hit = Arc::new(Mutex::new(vec![0;
-            TOUCHING_CACHE_LINES + TOUCHING_SIZE + TOUCHING_CACHE_LINES]));
-*/
-/*
-        let cache_desc = Rc::new(RefCell::new(touching_cache_desc as &mut dyn CacheDescBase<Cacheline>));
-*/
-        let tcd_clone = touching_cache_desc.clone();
+    // n - number of cache lines to scrub
+    fn test_scrubber(n: usize) {
+        let mut touching_cache_desc = new_touching_cache_desc();
+        let ptr = touching_cache_desc.mem.as_ref().unwrap().ptr;
+        let size = touching_cache_desc.mem.as_ref().unwrap().size;
+        let cacheline_size = touching_cache_desc.cacheline_size();
+        let tcd = touching_cache_desc.clone();
+
+        let cache_desc =
+            Rc::new(RefCell::new(&mut touching_cache_desc as &dyn CacheDescBase<TouchingCacheline>));
 
         let mut memory_scrubber =
-            match touching_init(&mut touching_cache_desc, alloc) {
-            Err(e) => panic!("Unable to initialize touching area: {}", e),
-            Ok(memory_scrubber) => memory_scrubber,
+            match MemoryScrubber::new(cache_desc, ptr, size) {
+            Err(e) => panic!("MemoryScrubber::new() failed {}", e),
+            Ok(scrubber) => scrubber,
         };
 
-        let cacheline_size =
-            memory_scrubber.cache_desc.borrow().cacheline_size();
+        match memory_scrubber.scrub(n) {
+            Err(e) => panic!("scrub failed: {}", e),
+            Ok(_) => println!("scrub succeeded!"),
+        };
 
-        for scrub in scrubs {
-            assert_eq!(scrub % cacheline_size, 0);
+        let vec_mutex = tcd.n_reads.unwrap().clone();
+        let vec = vec_mutex.lock().unwrap();
+        let n_reads = vec.as_ref();
+        touching_verify_scrub(memory_scrubber, n_reads, n / cacheline_size);
+    }
 
-            match memory_scrubber.scrub(*scrub) {
-                Err(e) => panic!("scrub failed: {}", e),
-                Ok(_) => println!("scrub succeeded!"),
-            };
-        }
+    // Set up a new TouchingCacheDesc
+    fn new_touching_cache_desc() -> TouchingCacheDesc {
+        let mut touching_cache_desc = TOUCHING_CACHE_DESC.clone();
 
-        let cache_lines = memory_scrubber.cache_desc.borrow().cache_lines();
+        // Allocate space for an array to hold the number of times a given
+        // cache-aligned memory location has been read by the scrubber. We
+        // allocate slop on both sides so we can detect if the read_cacheline()
+        // function is a little broken
+        let n_reads = Arc::new(Mutex::new(vec![0; TOUCHING_CACHE_LINES +
+            TOUCHING_SANDBOX_SIZE + TOUCHING_CACHE_LINES]));
+
+        // Get memory that will be scrubbed.
+        let size = touching_cache_desc.cacheline_size () *
+            TOUCHING_SANDBOX_SIZE;
+        let mem = alloc_mem(&touching_cache_desc, size);
+
+        touching_cache_desc.n_reads = Some(n_reads);
+        touching_cache_desc.mem = Some(mem);
+
+        touching_cache_desc
+    }
+
+    // Verify the proper locations were hit
+    // memory_scrubber - MemoryScrubber to use
+    // n_reads - array of read counts
+    // n - number of cache lines scrubbed
+    fn touching_verify_scrub(memory_scrubber: MemoryScrubber<TouchingCacheline>,
+        n_reads: &Vec<u32>, n: usize) {
+        let cache_desc = memory_scrubber.cache_desc.borrow();
+        let cacheline_size = cache_desc.cacheline_size();
+        let cache_lines = cache_desc.cache_lines();
 
         // Verify the cache size-sized area before the memory area. This should
         // not have been seen and so should have a zero value
         for i in 0..cache_lines {
-            let actual = tcd_clone.hit.as_ref().unwrap().lock().unwrap()[i];
+            let actual = n_reads[i];
             assert_eq!(actual, 0);
         }
 
         // Now verify the contents of the memory to see whether they were
-        // touched the expected number of times
-        for expected in expecteds {
-            assert_eq!(expected.0 % cacheline_size, 0);
-            let start = expected.0 / cacheline_size;
-            assert_eq!(expected.1 % cacheline_size, 0);
-            let n = expected.1 / cacheline_size;
-            let expected_val = expected.2;
-println!("expected {:?} start {:?} n {:?}", expected, start, n);
+        // touched the expected number of times. The number of hits for a
+        // location i in n_reads[] will be at least equal to the number of
+        // complete scans of the memory area. Then, the remaining number of
+        // items in the scan will be one larger.
+        let size = memory_scrubber.size;
+        let scrub_lines = size / cacheline_size;
+        let n_min_reads = n / scrub_lines;
+        let n_extra_reads = n % scrub_lines;
+        let mut scanned: usize = 0;
 
+        for line in 0..cache_lines {
+            let mut i = line;
 
-            for i in start..start + n {
-                let actual =
-                    tcd_clone.hit.as_ref().unwrap().lock().unwrap()[cache_lines + i];
-//println!("checking hit[{}]", cache_lines + i);
-if actual != expected_val {
-}
-                assert_eq!(actual, expected_val);
+            while i < scrub_lines {
+                let expected = n_min_reads +
+                    if scanned < n_extra_reads { 1 } else { 0 };
+                let actual = n_reads[cache_lines + i];
+                assert_eq!(actual, expected as u32);
+                scanned += 1;
+                i += cache_lines;
             }
         }
 
         // Verify the cache size-sized area after the memory area. This should
         // not have been seen and so should have a zero value
         for i in 0..cache_lines {
-            let start = cache_lines + TOUCHING_SIZE;
-            let actual = tcd_clone.hit.as_ref().unwrap().lock().unwrap()[start + i];
+            let start = cache_lines + TOUCHING_SANDBOX_SIZE;
+            let actual = n_reads[start + i];
             assert_eq!(actual, 0);
         }
     }
 
-    fn touching_init<'a>(touching_cache_desc: &'a mut TouchingCacheDesc,
-            alloc: (*const u8, usize)) ->
-        Result<MemoryScrubber<'a, Cacheline>, Error> {
-
-        // Set up the CacheDesc for the part of memory that will be scrubbed
-        // and include debugging information
-        let cache_desc = Rc::new(RefCell::new(touching_cache_desc as &mut dyn CacheDescBase<Cacheline>));
-
-        let memory_scrubber =
-            match MemoryScrubber::<Cacheline>::new(cache_desc, alloc.0,
-                alloc.1) {
-            Err(e) => panic!("MemoryScrubber::new() failed {}", e),
-            Ok(scrubber) => scrubber,
-        };
-
-        Ok(memory_scrubber)
-    }
-
-    fn touching_alloc(touching_cache_desc: &TouchingCacheDesc) ->
-        Result<(*const u8, usize), Error> {
-        // Allocate memory, which includes a cache size-sided area before what
-        // we are touching and a cache size-sized area after it. These areas
-        // should not be touched by scrubbing.
-        let size =
-            touching_cache_desc.cacheline_size() * TOUCHING_SANDBOX_SIZE +
-            TOUCHING_CACHE_LINES;
-        let mem_area: Vec<u8> = vec![0; size];
-        let p = mem_area.as_ptr() as *const u8;
-        match align_area(touching_cache_desc.cache_lines(),
-            touching_cache_desc.cacheline_size(), p, size) {
-            None => Err(Error::UnalignedSize),
-            Some((p, size)) => Ok((p, size)),
-        }
-    }
-
-    // Align the pointer to a multiple of the product of the size of the cache
-    // line and the maximum cache index (cache_area_size). This address will
-    // therefore have a cache index of zero.
-    // cache_lines - number of cache lines in the cache
-    // cacheline_size - number of bytes in a cache line
-    // p - pointer to the memory area
-    // size - size of memory area in bytes
+    // Allocates a memory area
     //
-    // Returns Some(p, size) on success, where p is aligned to the next higher
-    // multiple of cache_area_size. The size is the original size, decremented
-    // by the number of bytes p was incremented, then rounded to a multple of
-    // cache_area_size. None is returned if p would be incremented by more than
-    // the original size or rounded down to zero.
-    fn align_area(cache_lines: usize, cacheline_size: usize, p: *const u8,
-        size: usize) ->
-        Option<(*const u8, usize)> {
-        // If we go through memory with addresses offset by the cacheline size,
-        // we will be incrementing the cache index by one and thus hitting a
-        // different cache line each time. The cache index will wrap when the
-        // address has been incremented by the product of the cache line size
-        // and the maximum cache index value. Call this product cache_area_size.
-        //
-        // If we start this walk through memory at an address that is a
-        // multiple of cache_area_size, the cache index of that address will be
-        // zero.  This is a terrifc starting place for the tests. We round the
-        // pointer up to the next multiple of cache_area_size because there
-        // might be no memory before it. This means the returned pointer might
-        // be incremented as much as cache_area_size - 1 and additional memory
-        // may need to be allocated to ensure enough is available to perform the
-        // tests.
-        let cache_area_size = cache_lines * cacheline_size;
+    // size - The number of bytes to allocate
+    // 
+    // Returns: a TouchingMem with a Vec<u8>. The size of the Vec<u8> is
+    // opaque but the p element in the TouchingMem has at least size bytes
+    // starting at a cache size-aligned section of memory. The size element
+    // is the size used to call this function.
+    fn alloc_mem<Cacheline>(cache_desc: &dyn CacheDescBase<Cacheline>, size: usize) ->
+        TouchingMem {
+        // Allocate memory, which includes a cache size-sided area before what
+        // we are touching. These areas should not be touched by scrubbing.
+        let cacheline_size = cache_desc.cacheline_size();
+        let cache_lines = cache_desc.cache_lines();
+        let cache_size = cacheline_size * cache_lines;
 
-        // Compute the number of bytes to add to p to reach the next address
-        // that is a multiple of cache_area_size;
-        let p_offset = cache_area_size - ((p as Addr) % cache_area_size);
-        if p_offset >= size {
-            return None;
+        let mem_area: Vec<u8> = vec![0; cache_size + size];
+
+        // Now find the first cache size-aligned pointer
+        let p_addr = (mem_area.as_ptr() as usize + cache_size - 1) &
+            !(cache_size - 1);
+        let p = p_addr as *const u8;
+
+        TouchingMem {
+            mem_area:   mem_area,
+            ptr:        p,
+            size:       size,
         }
-
-        let p = unsafe { p.offset(p_offset as isize) };
-
-        // We just gobbled up p_offset bytes at the start of the memory area
-        // and so need to decrement the size accordingly. Then we align the
-        // size to a multiple of the c
-        let adjusted_size = size - p_offset;
-        let size = adjusted_size - (adjusted_size % cache_area_size);
-        if size == 0 {
-            return None;
-        }
-
-        Some((p, size))
     }
 }
