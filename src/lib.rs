@@ -652,11 +652,11 @@ mod tests {
         test_scrubber(first_area);
     }
 
-    #[test] #[ignore]
+    #[test]
     fn test_touch_many_many() {
         const MANY: usize = 72;
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
-        let first_area = 5 * cacheline_size * TOUCHING_SANDBOX_SIZE + MANY;
+        let first_area = 5 * cacheline_size * (TOUCHING_SANDBOX_SIZE + MANY);
         test_scrubber(first_area);
     }
 
