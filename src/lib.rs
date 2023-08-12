@@ -458,13 +458,8 @@ mod tests {
     // TOUCHING_CACHE_INDEX_WIDTH - number of bits used as a cache line index
     //  in the cache
     // TOUCHING_CACHE_LINES - number of cache lines
-/* FIXME: restore this
     const TOUCHING_CACHELINE_WIDTH: usize = 6;
     const TOUCHING_CACHE_INDEX_WIDTH: usize = 10;
-    const TOUCHING_CACHE_LINES: usize = 1 << TOUCHING_CACHE_INDEX_WIDTH;
-*/
-    const TOUCHING_CACHELINE_WIDTH: usize = 3;
-    const TOUCHING_CACHE_INDEX_WIDTH: usize = 1;
     const TOUCHING_CACHE_LINES: usize = 1 << TOUCHING_CACHE_INDEX_WIDTH;
 
     // Number of cache footprints we use for testing
@@ -475,10 +470,7 @@ mod tests {
         TOUCHING_CACHE_LINES * TOUCHING_CACHE_NUM_TOUCHED;
 
     // TouchingECCData - The data size used to compute the ECC for basic tests
-/* FIXME: restore this
     type TouchingECCData = u64;
- */
-    type TouchingECCData = u16;
 
     // TouchingCacheline - the data type of a cache line
     type TouchingCacheline =
