@@ -237,16 +237,20 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
     // of the memory area, but it seems unlikely that this would be useful.
     // n - Number of bytes to scrub
     pub fn scrub(&mut self, n: usize) -> Result<(), Error> {
+        let cacheline_width = {
+            self.cache_desc.borrow().cacheline_width()
+        };
+
         let cacheline_size = {
             self.cache_desc.borrow().cacheline_size()
         };
 
-        if (n % cacheline_size) != 0 {
+        if (n & (cacheline_size - 1)) != 0 {
             return Err(Error::UnalignedSize);
         }
 
         // Convert to the number of cachelines to scrub
-        let n_cachelines = n / cacheline_size;
+        let n_cachelines = n >> cacheline_width;
 
         for _i in 0..n_cachelines {
             // If we don't already have an iterator, get a new one.
@@ -303,11 +307,16 @@ impl<'a, Cacheline> Iterator<'a, Cacheline> {
     pub fn new(cache_desc: CacheDescRc<'a, Cacheline>,
         start: *const u8, size: usize) -> Result<Iterator<'a, Cacheline>, Error> {
         let start_addr = start as Addr;
+
         let cacheline_size = {
             cache_desc.borrow().cacheline_size()
         };
 
-        if (start_addr % cacheline_size) != 0 {
+        let cacheline_width = {
+            cache_desc.borrow().cacheline_width()
+        };
+
+        if (start_addr & (cacheline_size - 1)) != 0 {
             return Err(Error::UnalignedAddress);
         }
 
@@ -315,14 +324,14 @@ impl<'a, Cacheline> Iterator<'a, Cacheline> {
             return Err(Error::ZeroSize);
         }
 
-        if (size % cacheline_size) != 0 {
+        if (size & (cacheline_size - 1)) != 0 {
             return Err(Error::UnalignedSize);
         }
 
         Ok(Iterator {
             cache_desc: cache_desc,
             start:      start as *const Cacheline,
-            size:       (size / cacheline_size) as usize,
+            size:       (size >> cacheline_width) as usize,
             index:      0,
             offset:     0,
         })
@@ -678,7 +687,7 @@ mod tests {
         let mut touching_cache_desc = new_touching_cache_desc();
         let ptr = touching_cache_desc.mem.as_ref().unwrap().ptr;
         let size = touching_cache_desc.mem.as_ref().unwrap().size;
-        let cacheline_size = touching_cache_desc.cacheline_size();
+        let cacheline_width = touching_cache_desc.cacheline_width();
         let tcd = touching_cache_desc.clone();
 
         let cache_desc = &mut touching_cache_desc as
@@ -697,7 +706,7 @@ mod tests {
         let vec_mutex = tcd.n_reads.unwrap().clone();
         let vec = vec_mutex.borrow();
         let n_reads = vec.as_ref();
-        touching_verify_scrub(memory_scrubber, n_reads, n / cacheline_size);
+        touching_verify_scrub(memory_scrubber, n_reads, n >> cacheline_width);
 
         // This is used to keep mem_area from being deallocated before we're
         // done
@@ -733,7 +742,7 @@ mod tests {
     fn touching_verify_scrub(memory_scrubber: MemoryScrubber<TouchingCacheline>,
         n_reads: &Vec<u8>, n: usize) {
         let cache_desc = memory_scrubber.cache_desc.borrow();
-        let cacheline_size = cache_desc.cacheline_size();
+        let cacheline_width = cache_desc.cacheline_width();
         let cache_lines = cache_desc.cache_lines();
 
         verify_guard(n_reads, 0);
@@ -744,7 +753,7 @@ mod tests {
         // complete scans of the memory area. Then, the remaining number of
         // items in the scan will be one larger.
         let size = memory_scrubber.size;
-        let scrub_lines = size / cacheline_size;
+        let scrub_lines = size >> cacheline_width;
         let n_min_reads = n / scrub_lines;
         let n_extra_reads = n % scrub_lines;
 
