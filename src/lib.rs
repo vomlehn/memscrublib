@@ -376,6 +376,7 @@ mod tests {
     use std::cell::RefCell;
     use std::ptr;
     use std::rc::Rc;
+    use std::time::Instant;
 
     use crate::{CacheDesc, Error, Iterator, MemoryScrubber};
 
@@ -399,7 +400,6 @@ mod tests {
         (1 << BASIC_CACHELINE_WIDTH) / std::mem::size_of::<BasicECCData>()];
 
     // BasicTestCacheDescRc - Description of the cache for basic tests
-    // cacheline_width - Number of bits in the index into the cachline bytes
     // cache_index_width - Number of bits of the cache index.
     #[derive(Clone, Copy, Debug)]
     struct BasicTestCacheDescRc {
@@ -635,6 +635,40 @@ mod tests {
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
         let first_area = 5 * cacheline_size * (TOUCHING_SANDBOX_SIZE + MANY);
         test_scrubber(first_area);
+    }
+
+    #[test]
+    fn test_big() {
+        const MEM_AREA_SIZE: usize = 1 * 1024 * 1024 * 1024;
+
+        let cache_desc = BASIC_CACHE_DESC.clone();
+        let mem = alloc_mem::<BasicCacheline>(&cache_desc, MEM_AREA_SIZE);
+        let mut scrubber = match MemoryScrubber::<BasicCacheline>::
+            new(&cache_desc, mem.ptr, mem.size) {
+            Err(e) => panic!("Could not create MemoryScrubber: {}",
+                e),
+            Ok(scrubber) => scrubber,
+        };
+
+        // Use the first scrub to page in all memory
+        match scrubber.scrub(mem.size) {
+            Err(e) => panic!("Scrub failed: {}", e),
+            Ok(_) => {},
+        }
+
+        println!("Please wait while timing scrub operation");
+        let start_time = Instant::now();
+
+        match scrubber.scrub(mem.size) {
+            Err(e) => panic!("Scrub failed: {}", e),
+            Ok(_) => {},
+        }
+
+        let end_time = start_time.elapsed();
+        let duration = end_time.as_secs_f64();
+
+        let mem_size = (mem.size as f64) / 1e9;
+        println!("Scrub rate: {} GBps", mem_size / duration);
     }
 
     // Test support function that scrubs a section of memory, then verifies that
