@@ -376,7 +376,6 @@ mod tests {
     use std::cell::RefCell;
     use std::ptr;
     use std::rc::Rc;
-    use std::sync::{Mutex, Arc};
 
     use crate::{CacheDesc, Error, Iterator, MemoryScrubber};
 
@@ -479,13 +478,13 @@ mod tests {
     #[derive(Clone, Debug)]
     struct TouchingCacheDescRc {
         cache_index_width:  usize,
-        n_reads:            Option<Arc<Mutex<Vec<u32>>>>,
+        n_reads:            Option<Rc<RefCell<Vec<u32>>>>,
         mem:                Option<TouchingMem>,
     }
 
     // This clues the compiler in that I know what I'm doing by having a
     // *const pointer in the struct
-    unsafe impl Send for TouchingCacheDescRc {}
+    unsafe impl Sync for TouchingCacheDescRc {}
 
     // Cache descriptor to pass to the memory scrubbing functions.
     static TOUCHING_CACHE_DESC: TouchingCacheDescRc = TouchingCacheDescRc {
@@ -510,7 +509,7 @@ mod tests {
             let i =
                 (cacheline as usize - self.mem.as_ref().unwrap().ptr as usize) /
                 self.cacheline_size();
-            let mut n_reads = self.n_reads.as_ref().unwrap().lock().unwrap();
+            let mut n_reads = self.n_reads.as_ref().unwrap().borrow_mut();
             n_reads[GUARD_LINES + i] += 1;
         }
     }
@@ -662,7 +661,7 @@ mod tests {
         };
 
         let vec_mutex = tcd.n_reads.unwrap().clone();
-        let vec = vec_mutex.lock().unwrap();
+        let vec = vec_mutex.borrow();
         let n_reads = vec.as_ref();
         touching_verify_scrub(memory_scrubber, n_reads, n / cacheline_size);
 
@@ -679,7 +678,7 @@ mod tests {
         // cache-aligned memory location has been read by the scrubber. We
         // allocate slop on both sides so we can detect if the read_cacheline()
         // function is a little broken
-        let n_reads = Arc::new(Mutex::new(vec![0; GUARD_LINES +
+        let n_reads = Rc::new(RefCell::new(vec![0; GUARD_LINES +
             TOUCHING_SANDBOX_SIZE + GUARD_LINES]));
 
         // Get memory that will be scrubbed.
