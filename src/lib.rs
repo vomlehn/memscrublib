@@ -478,7 +478,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct TouchingCacheDescRc {
         cache_index_width:  usize,
-        n_reads:            Option<Rc<RefCell<Vec<u32>>>>,
+        n_reads:            Option<Rc<RefCell<Vec<u8>>>>,
         mem:                Option<TouchingMem>,
     }
 
@@ -697,7 +697,7 @@ mod tests {
     // n_reads - array of read counts
     // n - number of cache lines scrubbed
     fn touching_verify_scrub(memory_scrubber: MemoryScrubber<TouchingCacheline>,
-        n_reads: &Vec<u32>, n: usize) {
+        n_reads: &Vec<u8>, n: usize) {
         let cache_desc = memory_scrubber.cache_desc.borrow();
         let cacheline_size = cache_desc.cacheline_size();
         let cache_lines = cache_desc.cache_lines();
@@ -723,7 +723,7 @@ mod tests {
                 let expected = n_min_reads +
                     if scanned < n_extra_reads { 1 } else { 0 };
                 let actual = n_reads[GUARD_LINES + i];
-                assert_eq!(actual, expected as u32);
+                assert_eq!(actual, expected as u8);
                 scanned += 1;
                 i += cache_lines;
             }
@@ -737,7 +737,7 @@ mod tests {
     // n_reads - Array that should have all zero values at the offset for
     //      GUARD_LINES elements
     // offset - Offset in n_reads to check
-    fn verify_guard(n_reads: &Vec<u32>, offset: usize) {
+    fn verify_guard(n_reads: &Vec<u8>, offset: usize) {
         for i in 0..GUARD_LINES {
             let actual = n_reads[offset + i];
             assert_eq!(actual, 0);
