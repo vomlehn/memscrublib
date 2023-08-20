@@ -1,5 +1,7 @@
 // This is code for a memory scrubber.
 //
+// INTRODUCTION
+// ============
 // What is a memory scrubber and why would you use one?
 //
 // A memory scrubber is simply a piece of hardware or software that reads all
@@ -51,6 +53,9 @@
 // evicted from only a few cache lines each time scrubbing is done, producing
 // a more even performance impact.
 //
+// CACHE ORGANIZATION AND ADDRESSES
+// ================================
+//
 // This code assumes that an address can be broken into three parts:
 //
 //       _____________________________________________________________
@@ -65,6 +70,9 @@
 // a specific way within the cache line specified by the cache index but don't
 // usually otherwise participate in cache operations.
 //
+// USAGE
+// =====
+// FIXME; This all has to be reviewed.
 // To use this, it recommended you do the following:
 //
 // 1.   Determine a suitable data type to represent the size of object that
@@ -77,7 +85,10 @@
 //      MyCacheline. It usually the case that cache lines are arrays of ECCData
 //      items, such as:
 //
-//          type MyCacheline = [u64; 8];
+//          #[repr(C)]
+//          struct MyCacheline {
+//              data: [u64; 8];
+//          }
 //
 //      Since many systems have more than one level of cache memory, note
 //      that this should be the longest cache line in in the system.
@@ -89,8 +100,8 @@
 //      (likely), the cache line size is the number of bytes in a single way.
 //
 // 3.   Create a structure that holds definitions of your cache. This is
-//      an implementation of the CacheDesc trait. For example purposes, call
-//      this MyCacheDesc. In most cases, the default functions provide
+//      an implementation of the BaseCacheDesc trait. For example purposes, call
+//      this MyBaseCacheDesc. In most cases, the default functions provide
 //      everything you need, so only things you need to define are the
 //      following:
 //
@@ -106,8 +117,9 @@
 //          and checked for a correct ECC.  If the entire cache is read when
 //          any element is read, this could be:
 //
-//              fn read_cacheline(&mut self, cacheline: *const Cacheline) {
+//              fn read_cacheline(&mut self, cacheline: *const MyCacheline) {
 //                  let _dummy = unsafe {
+// FIXME: fix this
 //                      ptr::read(&((*cacheline)[0]) as *const _);
 //                  };
 //              }
@@ -121,7 +133,7 @@
 // 4.   Create a new MemoryScrubber:
 //
 //          let scrubber = match MemoryScrubber::<MyCacheline>::
-//              new(&MyCacheDesc::<MyCacheline> {...}, my_start, my_end) {
+//              new(&MyBaseCacheDesc::<MyCacheline> {...}, my_start, my_end) {
 //              Err(e) => ...
 //
 // 5.   Scrub some number of bytes. You could scrub a quarter of the memory area
@@ -130,24 +142,157 @@
 //          match scrubber.scrub(size / 4) {
 //              Err(e) => ...
 //
-//      The size passed to scrub_scrub_areIa() must be a multiple of the cache line size.
+//      The size passed to scrub_scrub_areIa() must be a multiple of the cache
+//      line size.
+//
+// BREAKING UP SCANS
+// =================
+// The decision of how to break up a single scan of all of memory depends on
+// system factors such as:
+// o    Is the scan preemptible?
+// o    Does the scan cause a context switch and how many can be tolerated
+//      in a given interval?
+// o    What is the performance impact of evicting and reloading the section
+//      of cache corresponding to the scrubbed memory.
+//
+// FREQUENCY OF SCANS
+// ==================
+// Start by determining the number of errors an ECC unit that operates on
+// words with w bits can correct.
+//
+// GPT4 Query
+// ----------
+//  Assume a memory with S words of W bits, with the probability that a single
+//  bit will be flipped in time Tf is P. What is probability that at least one
+//  word will have more than N bits flipped in the interval T?
+//
+// Unedited answer (has not yet been verified)
+// -------------------------------------------
+//  The problem you're describing involves complex probabilities and involves
+//  calculations related to binomial distributions. While there isn't a single
+//  "mathematical function" that directly provides the answer, you can break
+//  down the problem into components based on probability theory. Here's a
+//  breakdown of the approach in mathematical terms:
+//
+//  Let:
+//
+//  - `S` be the number of words.
+//  - `W` be the number of bits in a word.
+//  - `P` be the probability that a single bit will be flipped in time Tf.
+//  - `N` be the maximum number of flipped bits in a word.
+//  - `k` be the number of bits flipped in a word (0 <= k <= W).
+//
+//  The probability that exactly `k` bits are flipped in a single word can be
+//  calculated using the binomial distribution formula:
+//
+//  ```
+//  P(k) = C(W, k) * (1 - P)^(W - k) * P^k
+//  ```
+//
+//  Where `C(W, k)` is the binomial coefficient, given by:
+//
+//  ```
+//  C(W, k) = W! / (k! * (W - k)!)
+//  ```
+//
+//  The probability that a single word doesn't have more than `N` bits flipped
+//  is the sum of probabilities for `k` from 0 to `N`:
+//
+//  ```
+//  P_single_word = Σ(P(k)) for k = 0 to N
+//  ```
+//
+//  Finally, the probability that at least one word has more than `N` bits
+//  flipped in the interval T can be calculated using the complement rule:
+//
+//  ```
+//  P_at_least_one_word = 1 - (1 - P_single_word)^S
+//  ```
+//
+//  Keep in mind that these formulas involve factorials and exponentials, which
+//  can lead to large computations for larger values of `S`, `W`, and `N`. You
+//  might need to use specialized libraries or numerical approximations if you
+//  intend to calculate these probabilities for significant values of these
+//  parameters.
+//
+// ChatGPT Result For Determination Of The Time Until The First Word Goes Bad
+// --------------------------------------------------------------------------
+//  To compute the time interval for a given `P_at_least_one_word`, you would
+//  need to rearrange the formula for `P_at_least_one_word` to solve for the
+//  time interval `T`:
+//
+//  ```
+//  P_at_least_one_word = 1 - (1 - P_single_word)^S
+//  ```
+//
+//  Let's rearrange the formula:
+//
+//  ```
+//  1 - P_at_least_one_word = (1 - P_single_word)^S
+//  ```
+//
+//  ```
+//  T = (-ln(1 - P_at_least_one_word)) / ln(1 - P_single_word)
+//  ```
+//
+//  In this formula, `ln` represents the natural logarithm function. You can
+//  use Rust's `f64` math functions to compute this.
+//
+//  Here's how you can implement it in Rust:
+//
+//  ```rust
+//  fn compute_time_interval(P_at_least_one_word: f64, P_single_word: f64, S: u32) -> f64 {
+//      let numerator = -(1.0 - P_at_least_one_word).ln();
+//      let denominator = (1.0 - P_single_word).ln();
+//
+//      numerator / (denominator * f64::from(S))
+//  }
+//
+//  fn main() {
+//      let P_at_least_one_word = 0.9; // Desired probability
+//      let P_single_word = 0.01; // Probability for a single word
+//      let S = 10; // Number of words
+//
+//      let time_interval = compute_time_interval(P_at_least_one_word, P_single_word, S);
+//      println!("Time Interval: {}", time_interval);
+//  }
+//  ```
+//
+//  Replace the values of `P_at_least_one_word`, `P_single_word`, and `S` with
+//  your specific values. Keep in mind that these calculations might not be
+//  feasible for very small values of `P_at_least_one_word` or `P_single_word`
+//  due to the precision of floating-point arithmetic. Additionally, the `ln`
+//  function might return NaN (Not-a-Number) for certain inputs, so you should
+//  handle potential edge cases in your code.
+//
+// So, that determines how often the entire memory must be scanned. Note that
+// above, S is the number of words of memory. The total number of 8-bit bytes in
+// memory is S * (W / 8).
+//
+// NOTE: The above assumes that, once a bit is flipped, it stays flipped. The
+// probability of a bit being inverted, then inverted again is small enough
+// that it can be ignored.
 
 use std::cell::RefCell;
 use std::iter;
+use std::marker::PhantomData;
 use std::rc::Rc;
 use thiserror::Error;
 
 // Data type that can hold any address for manipulation as an integer
 type Addr = usize;
 
+pub trait Cacheline {
+}
+
 // Describe cache parameters and pull in all elements of the cache line.
-pub trait CacheDesc<Cacheline> {
+pub trait CacheDesc<T: Cacheline> {
     // NOTE: You are unlikely to ever need to implement this
     // Return the number of bits required to hold an index into the bytes of
-    // a cacheline. So, if you have an eight-byte cache line (unlikely), this
+    // a cache line. So, if you have an eight-byte cache line (unlikely), this
     // would return 3.
     fn cacheline_width(&self) -> usize {
-        usize::BITS as usize - 1 - std::mem::size_of::<Cacheline>()
+        usize::BITS as usize - 1 - std::mem::size_of::<T>()
             .leading_zeros() as usize
     }
 
@@ -177,7 +322,7 @@ pub trait CacheDesc<Cacheline> {
     // of bad bits is small enough (ECC-dependent), corrected data should
     // be written back to that location, preventing the accumulation of so many
     // bad bits that the correct value cannot be determined.
-    fn read_cacheline(&mut self, p: *const Cacheline);
+    fn read_cacheline(&mut self, p: *const T);
 
     // Return the size of a ScrubArea in cachelines
     fn size_in_cachelines(&self, scrub_area: &ScrubArea) -> usize {
@@ -188,10 +333,20 @@ pub trait CacheDesc<Cacheline> {
             scrub_area.end as usize >> self.cacheline_width();
         (end_in_cachelines - start_in_cachelines) + 1
     }
+
+    // Returns the cache index part of the address
+    fn cache_index(&self, p: *const u8) -> usize {
+        let width = self.cacheline_width();
+        let mask = (1 << self.cache_index_width()) - 1;
+        (p as Addr >> width) & mask
+    }
 }
 
 pub type CacheDescRc<'a, Cacheline> =
     Rc<RefCell<&'a mut dyn CacheDesc<Cacheline>>>;
+
+//pub type BaseCacheDescRc<'a, Cacheline> =
+//    Rc<RefCell<&'a mut dyn BaseCacheDesc<Cacheline>>>;
 
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum Error {
@@ -210,9 +365,6 @@ pub enum Error {
     #[error("ScrubArea is empty")]
     EmptyScrubArea,
 
-    #[error("std::mem::size_of::<Cacheline> should equal CacheDescRc.cacheline_size()")]
-    CachelineSizeMismatch,
-
     #[error("Internal Error: Iterator failed")]
     IteratorFailed,
 }
@@ -222,21 +374,20 @@ pub enum Error {
 // scrub_areas - ScrubAreas being scrubbed
 // iterator - MemoryScrubberIterator used to walk through the memory being
 //      scrubbed
-pub struct MemoryScrubber<'a, Cacheline> {
-    cache_desc:     CacheDescRc<'a, Cacheline>,
+pub struct MemoryScrubber<'a, T: CacheDesc<U>, U: Cacheline> {
+    cache_desc:     Rc<RefCell<&'a mut T>>, //<'a, Cacheline>,
     scrub_areas:    &'a [ScrubArea],
-    iterator:       Option<MemoryScrubberIterator<'a, Cacheline>>,
+    iterator:       Option<MemoryScrubberIterator<'a, T, U>>,
 }
 
-impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> MemoryScrubber<'a, T, U> {
 
     // Create a new memory scrubber
     // cache_desc - Description of the cache
     // start - Virtual address of memory being scrubbed
     // end - Virtual address of the last byte of memory to be scrubbed
-    pub fn new(cache_desc: &'a mut dyn CacheDesc<Cacheline>,
-        scrub_areas: &'a [ScrubArea]) ->
-        Result<MemoryScrubber<'a, Cacheline>, Error> {
+    pub fn new(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea]) ->
+        Result<MemoryScrubber<'a, T, U>, Error> {
 
         if scrub_areas.len() == 0 {
             return Err(Error::NoScrubAreas);
@@ -268,7 +419,7 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
 
         let cache_desc_rc = Rc::new(RefCell::new(cache_desc));
 
-        Ok(MemoryScrubber::<'a> {
+        Ok(MemoryScrubber::<'a, T, U> {
             cache_desc:     cache_desc_rc,
             scrub_areas:    scrub_areas,
             iterator:       None,
@@ -296,20 +447,31 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
         let cachelines_to_scrub = n >> cacheline_width;
 
         for _i in 0..cachelines_to_scrub {
-            // If we don't have an iterator, get one
-            if self.iterator.is_none() {
-                self.iterator =
-                    Some(MemoryScrubberIterator::new(self.cache_desc.clone(),
-                    &self.scrub_areas));
-            }
-            let next = self.iterator.as_mut().unwrap().next();
+            // Get the next area to scrub. If we don't have an iterator, get
+            // one
+            let p: *mut U;
 
-            match next {
-                None => self.iterator = None,
-                Some(p) => {
-                    self.cache_desc.borrow_mut().read_cacheline(p);
-                },
-            };
+            loop {
+                if self.iterator.is_none() {
+                    let cache_desc = self.cache_desc.clone()
+                        as Rc<RefCell<&mut T>>;
+                    self.iterator =
+                        Some(MemoryScrubberIterator::<T, U>::new(cache_desc,
+                        &self.scrub_areas));
+                }
+
+                let next = self.iterator.as_mut().unwrap().next();
+
+                match next {
+                    None => self.iterator = None,
+                    Some(this_p) => {
+                        p = this_p;
+                        break;
+                    },
+                }
+            }
+
+            self.cache_desc.borrow_mut().read_cacheline(p);
         }
 
         
@@ -317,17 +479,19 @@ impl<'a, Cacheline> MemoryScrubber<'a, Cacheline> {
     }
 }
 
-pub struct MemoryScrubberIterator<'b, Cacheline> {
-    cache_desc:     CacheDescRc<'b, Cacheline>,
-    scrub_areas:    &'b [ScrubArea],
-    iterator:       Option<ScrubAreaIterator<'b, Cacheline>>,
+pub struct MemoryScrubberIterator<'a, T, U> {
+    cache_desc:     Rc<RefCell<&'a mut T>>,
+    scrub_areas:    &'a [ScrubArea],
+    iterator:       Option<ScrubAreaIterator<'a, T, U>>,
     index:          usize,
 }
 
-impl <'b, Cacheline> MemoryScrubberIterator<'b, Cacheline> {
-    pub fn new(cache_desc: CacheDescRc<'b, Cacheline>,
-        scrub_areas: &'b [ScrubArea]) ->
-        MemoryScrubberIterator<'b, Cacheline> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> MemoryScrubberIterator<'a, T, U> {
+//    pub fn new(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea]) ->
+//        Result<MemoryScrubber<'a, T>, Error> {
+    pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
+        scrub_areas: &'a [ScrubArea]) ->
+        MemoryScrubberIterator<'a, T, U> {
 
         MemoryScrubberIterator {
             cache_desc:     cache_desc,
@@ -338,8 +502,8 @@ impl <'b, Cacheline> MemoryScrubberIterator<'b, Cacheline> {
     }
 }
 
-impl<Cacheline> iter::Iterator for MemoryScrubberIterator<'_, Cacheline> {
-    type Item = *const Cacheline;
+impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for MemoryScrubberIterator<'_, T, U> {
+    type Item = *mut U;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -349,8 +513,8 @@ impl<Cacheline> iter::Iterator for MemoryScrubberIterator<'_, Cacheline> {
 
             if self.iterator.is_none() {
                 self.iterator =
-                    ScrubAreaIterator::new(self.cache_desc.clone(),
-                    &self.scrub_areas[self.index]);
+                    Some(ScrubAreaIterator::<T, U>::new(self.cache_desc.clone(),
+                    &self.scrub_areas[self.index]));
             }
 
             match self.iterator.as_mut().unwrap().next() {
@@ -372,35 +536,37 @@ impl<Cacheline> iter::Iterator for MemoryScrubberIterator<'_, Cacheline> {
 // offset:      Number of cache lines between the first address corresponding to
 //              the given cache index and the address that will be read. This is
 //              a multiple of the number cache lines in the cache.
-pub struct ScrubAreaIterator<'b, Cacheline> {
-    cache_desc: CacheDescRc<'b, Cacheline>,
+// _marker:     Forces U to be recognized as used. FIXME: remove _marker
+pub struct ScrubAreaIterator<'a, T, U> {
+    cache_desc: Rc<RefCell<&'a mut T>>,
     scrub_area: ScrubArea,
     index:      usize,
     offset:     usize,
+    _marker:    PhantomData<U>
 }
 
-impl<'b, Cacheline> ScrubAreaIterator<'b, Cacheline> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> ScrubAreaIterator<'a, T, U> {
     // Create a new ScrubAreaIterator.
     // scrub_area: Memory over which we Iterate
     //
     // Returns: Ok(ScrubAreaIterator) on success, Err(Error) on failure
-    pub fn new(cache_desc: CacheDescRc<'b, Cacheline>,
-        scrub_area: &ScrubArea) ->
-        Option<ScrubAreaIterator<'b, Cacheline>> {
+    pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
+        scrub_area: &'a ScrubArea) -> ScrubAreaIterator<'a, T, U> {
 
-        Some(ScrubAreaIterator {
+        ScrubAreaIterator {
             cache_desc: cache_desc,
             scrub_area: scrub_area.clone(),
             index:      0,
             offset:     0,
-        })
+            _marker:    PhantomData,
+        }
     }
 }
 
 // Return a pointer into a series of Cacheline items. To get a byte address
 // from the return value of next(), call it ret_val, use:
-impl<Cacheline> iter::Iterator for ScrubAreaIterator<'_, Cacheline> {
-    type Item = *const Cacheline;
+impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for ScrubAreaIterator<'a, T, U> {
+    type Item = *mut U;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -418,18 +584,18 @@ impl<Cacheline> iter::Iterator for ScrubAreaIterator<'_, Cacheline> {
             //
             // This, modulo the cache size, is the cache index for the addresses
             // in a pass through that cache index.
-            let start_index = cache_index::<Cacheline>(&self.cache_desc,
-                self.scrub_area.start);
+            let cd = &self.cache_desc.borrow() as &T;
+            let start_index = cd.cache_index(self.scrub_area.start);
             let offset = start_index + self.index + self.offset;
-            let size = self.cache_desc.borrow().size_in_cachelines(&self.scrub_area);
+            let size = cd.size_in_cachelines(&self.scrub_area);
 
             if offset < size {
                 let res = unsafe {
-                    (self.scrub_area.start as *const Cacheline)
+                    (self.scrub_area.start as *const U)
                         .offset(offset as isize)
                 };
                 self.offset += self.cache_desc.borrow().cache_lines();
-                return Some(res as *const Cacheline);
+                return Some(res as *mut U);
             }
             self.index += 1;
             self.offset = 0;
@@ -456,22 +622,14 @@ impl ScrubArea {
     }
 }
 
-
-// Returns the cache index part of the address
-fn cache_index<Cacheline>(cache_desc: &CacheDescRc<Cacheline>, p: *const u8) ->
-    usize {
-    (p as Addr) >> cache_desc.borrow().cacheline_width() &
-        ((1 << cache_desc.borrow().cache_index_width()) - 1)
-}
-
 #[cfg(test)]
 mod tests {
-    //use std::cell::RefCell;
+    use std::cell::{RefCell};
     use std::ptr;
-    //use std::rc::Rc;
+    use std::rc::Rc;
     use std::time::Instant;
 
-    use crate::{Addr, CacheDesc, Error, MemoryScrubber, ScrubArea};
+    use crate::{Addr, CacheDesc, Cacheline, Error, MemoryScrubber, ScrubArea};
 
     // Cache characteristics
     // BASIC_CACHELINE_WIDTH - number of bits required to index a byte in a
@@ -489,29 +647,35 @@ mod tests {
     // ECCData - The data size used to compute the ECC for basic tests
     // BasicCacheline - the data type of a cache line
     type BasicECCData = u64;
-    type BasicCacheline = [BasicECCData;
-        (1 << BASIC_CACHELINE_WIDTH) / std::mem::size_of::<BasicECCData>()];
 
-    // BasicTestCacheDescRc - Description of the cache for basic tests
+    #[repr(C)]
+    struct BasicCacheline {
+        data:   [BasicECCData;
+            (1 << BASIC_CACHELINE_WIDTH) / std::mem::size_of::<BasicECCData>()],
+    }
+
+    impl Cacheline for BasicCacheline {}
+
+    // BasicCacheDesc - Description of the cache for basic tests
     // cache_index_width - Number of bits of the cache index.
     #[derive(Clone, Copy, Debug)]
-    struct BasicTestCacheDescRc {
+    struct BasicCacheDesc {
         cache_index_width:        usize,
     }
 
     // Cache descriptor to pass to the memory scrubbing functions.
-    static BASIC_CACHE_DESC: BasicTestCacheDescRc = BasicTestCacheDescRc {
+    static BASIC_CACHE_DESC: BasicCacheDesc = BasicCacheDesc {
         cache_index_width:        BASIC_CACHE_INDEX_WIDTH,
     };
 
-    impl CacheDesc<BasicCacheline> for BasicTestCacheDescRc {
+    impl CacheDesc<BasicCacheline> for BasicCacheDesc {
         fn cache_index_width(&self) -> usize {
             self.cache_index_width
         }
 
         fn read_cacheline(&mut self, cacheline: *const BasicCacheline) {
             let _dummy = unsafe {
-                ptr::read(&((*cacheline)[0]) as *const _)
+                ptr::read(&((*cacheline).data[0]) as *const _)
             };
         }
     }
@@ -525,7 +689,7 @@ mod tests {
     const TOUCHING_ECCDATA_WIDTH: usize = usize::BITS as usize - 1 -
         std::mem::size_of::<TouchingECCData>() .leading_zeros() as usize;
     const TOUCHING_CACHELINE_WIDTH: usize = 3 + TOUCHING_ECCDATA_WIDTH;
-    const TOUCHING_CACHELINE_SIZE: usize = 1 << TOUCHING_CACHELINE_WIDTH;
+//    const TOUCHING_CACHELINE_SIZE: usize = 1 << TOUCHING_CACHELINE_WIDTH;
 /* FIXME: restore to this value
     const TOUCHING_CACHE_INDEX_WIDTH: usize = 10;
 */
@@ -547,8 +711,13 @@ mod tests {
     type TouchingECCData = u64;
 
     // TouchingCacheline - the data type of a cache line
-    type TouchingCacheline = [TouchingECCData;
-        TOUCHING_CACHELINE_SIZE / std::mem::size_of::<TouchingECCData>()];
+    #[repr(C)]
+    struct TouchingCacheline {
+        data:   [TouchingECCData;
+            (1 << TOUCHING_CACHELINE_WIDTH) / std::mem::size_of::<TouchingECCData>()],
+    }
+
+    impl Cacheline for TouchingCacheline {}
 
     // Description of memory that is read into by the read_cacheline() function.
     // This keeps the actually allocation together with the pointer into that
@@ -589,7 +758,6 @@ mod tests {
                 !(cacheline_size - 1);
             let start = start_addr as *const u8;
             let end = (start_addr + size - 1) as *const u8;
-println!("start {:x} size {} end {:x}", start_addr, size, end as usize);
 
             Ok(Mem {
                 mem_area:   mem_area,
@@ -648,7 +816,7 @@ println!("start {:x} size {} end {:x}", start_addr, size, end as usize);
     impl TouchingCacheDesc {
         // Set up a new TouchingCacheDesc
         // sizes: array of sizes of memory areas
-        fn new(sizes: &[usize]) -> TouchingCacheDesc {
+        fn new<Cacheline>(sizes: &[usize]) -> TouchingCacheDesc {
             // FIXME: clean this up
             let mut touching_cache_desc = TOUCHING_CACHE_DESC.clone();
 
@@ -658,13 +826,14 @@ println!("start {:x} size {} end {:x}", start_addr, size, end as usize);
             for size in sizes {
                 // Can I eliminate touching_cache_desc from here?
                 let mem =
-                    match Mem::new::<TouchingCacheline>(cacheline_size, *size) {
+                    match Mem::new::<Cacheline>(cacheline_size, *size) {
                     Err(e) => panic!("Memory allocation error: {}", e),
                     Ok(mem) => mem,
                 };
 
-                let n_reads_size =
-                    touching_cache_desc.size_in_cachelines(&mem.scrub_area);
+                let n_reads_size = GUARD_LINES +
+                    touching_cache_desc.size_in_cachelines(&mem.scrub_area) +
+                    GUARD_LINES;
                 read_infos.push(ReadInfo::new(n_reads_size, mem));
             }
 
@@ -679,14 +848,15 @@ println!("start {:x} size {} end {:x}", start_addr, size, end as usize);
         }
 
         fn read_cacheline(&mut self, cacheline: *const TouchingCacheline) {
-            // First, actually do the read
+            // Start off with the real, actually do the read
             let _dummy = unsafe {
-                ptr::read(&(*cacheline)[0]);
+                ptr::read(&(*cacheline).data[0]);
             };
             let cacheline_size = self.cacheline_size ();
 
             // Find the corresponding location and update the number of reads
-            for read_info in &mut self.read_infos.as_mut().unwrap().iter_mut() {
+            let read_infos = self.read_infos.as_mut().unwrap();
+            for read_info in &mut read_infos.iter_mut() {
                 let cacheline_addr = cacheline as Addr;
                 let start_addr = read_info.mem.scrub_area.start as Addr;
 
@@ -694,8 +864,7 @@ println!("start {:x} size {} end {:x}", start_addr, size, end as usize);
                     cacheline_addr <= read_info.mem.scrub_area.end as Addr {
                     let offset = (cacheline_addr - start_addr) / cacheline_size;
                     let n_reads = &mut read_info.n_reads.as_mut().unwrap();
-                    n_reads[offset] += 1;
-println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[offset]);
+                    n_reads[GUARD_LINES + offset] += 1;
                 }
             }
         }
@@ -723,7 +892,7 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
 
         let scrub_areas = [mem.scrub_area];
         let memory_scrubber =
-            MemoryScrubber::<BasicCacheline>::new(basic_cache_desc,
+            MemoryScrubber::<BasicCacheDesc, BasicCacheline>::new(basic_cache_desc,
             &scrub_areas);
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
@@ -748,7 +917,7 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
 
         let scrub_areas = [mem.scrub_area];
         let memory_scrubber =
-            MemoryScrubber::<BasicCacheline>::new(basic_cache_desc,
+            MemoryScrubber::<BasicCacheDesc, BasicCacheline>::new(basic_cache_desc,
             &scrub_areas);
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
@@ -770,7 +939,7 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
 
         let scrub_areas = [mem.scrub_area];
         let memory_scrubber =
-            MemoryScrubber::<BasicCacheline>::new(basic_cache_desc,
+            MemoryScrubber::<BasicCacheDesc, BasicCacheline>::new(basic_cache_desc,
             &scrub_areas);
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
@@ -782,7 +951,7 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
     fn test_aligned() {
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
         let cacheline_size = basic_cache_desc.cacheline_size();
-        let mut mem =
+        let mem =
             match Mem::new::<BasicCacheline>(cacheline_size,
             basic_cache_desc.cacheline_size() *
             basic_cache_desc.cache_lines() * 14) {
@@ -792,7 +961,7 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
 
         let scrub_areas = [mem.scrub_area];
         let mut memory_scrubber =
-            match MemoryScrubber::<BasicCacheline>::new(basic_cache_desc,
+            match MemoryScrubber::<BasicCacheDesc, BasicCacheline>::new(basic_cache_desc,
                 &scrub_areas) {
             Err(e) => panic!("MemoryScrubber::new() failed {}", e),
             Ok(scrubber) => scrubber,
@@ -849,7 +1018,7 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
     }
 
     #[test]
-    fn test_touch_many_many() {
+    fn test_touch_more_many() {
         const MANY: usize = 72;
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
         let first_area = 5 * cacheline_size * (TOUCHING_SANDBOX_SIZE + MANY);
@@ -863,14 +1032,15 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
         let mut basic_cache_desc = BASIC_CACHE_DESC.clone();
         let cacheline_size = basic_cache_desc.cacheline_size();
         let cache_desc = &mut basic_cache_desc;
-        let mut mem =
+        let mem =
             match Mem::new::<BasicCacheline>(cacheline_size,
             MEM_AREA_SIZE) {
             Err(e) => panic!("Memory allocation error: {}", e),
             Ok(mem) => mem,
         };
         let sizes = [mem.scrub_area];
-        let mut scrubber = match MemoryScrubber::<BasicCacheline>::
+        let mut scrubber =
+            match MemoryScrubber::<BasicCacheDesc, BasicCacheline>::
             new(cache_desc, &sizes) {
             Err(e) => panic!("Could not create MemoryScrubber: {}",
                 e),
@@ -903,51 +1073,53 @@ println!("read_cacheline: offset {} n_reads[{}] {}", offset, offset, n_reads[off
     // sizes - array of sizes of memory areas to scrub
     // n - number of cache lines to scrub
     fn test_scrubber(sizes: &[usize], n: usize) {
-        let touching_cache_desc = TouchingCacheDesc::new(&sizes);
-        let cache_desc = &mut touching_cache_desc.clone() as &mut dyn CacheDesc<_>;
-        let cacheline_width = cache_desc.cacheline_width();
+        let touching_cache_desc =
+            TouchingCacheDesc::new::<TouchingCacheline>(sizes);
+        let touching_cache_desc = Rc::new(RefCell::new(touching_cache_desc));
+        let cacheline_width = touching_cache_desc.borrow().cacheline_width();
 
         // Allocate memory areas according to the given sizes
         let mut scrub_areas: Vec<ScrubArea> = vec!();
-        for read_info in touching_cache_desc.clone().read_infos
-            .as_ref().unwrap() {
-            scrub_areas.push(read_info.mem.scrub_area.clone());
+        {
+            let cache_desc = touching_cache_desc.borrow();
+            let read_infos = cache_desc.read_infos.as_ref().unwrap();
+            for read_info in read_infos {
+                scrub_areas.push(read_info.mem.scrub_area.clone());
+            }
         }
 
-println!("scrub_areas {:?}", scrub_areas);
-        let mut memory_scrubber =
-            match MemoryScrubber::new(cache_desc, &scrub_areas) {
-            Err(e) => panic!("MemoryScrubber::new() failed {}", e),
-            Ok(scrubber) => scrubber,
+        let cache_desc = &mut *touching_cache_desc.borrow_mut() as
+            &mut TouchingCacheDesc;
+        let mut memory_scrubber = {
+            match MemoryScrubber::<TouchingCacheDesc, TouchingCacheline>
+                ::new(cache_desc, &scrub_areas) {
+                Err(e) => panic!("MemoryScrubber::new() failed {}", e),
+                Ok(scrubber) => scrubber,
+            }
         };
 
         if let Err(e) = memory_scrubber.scrub(n) {
             panic!("scrub failed: {}", e);
         };
 
-        verify_scrub(memory_scrubber, &touching_cache_desc,
-            n >> cacheline_width);
+        verify_scrub(memory_scrubber, n >> cacheline_width);
 
         // This is used to keep mem_area from being deallocated before we're
         // done
-        for read_info in touching_cache_desc.read_infos.unwrap() {
+        for read_info in cache_desc.read_infos.as_ref().unwrap() {
             assert_ne!(read_info.mem.mem_area.len(), 0);
         }
     }
 
     // Verify the proper locations were hit
     // memory_scrubber - MemoryScrubber to use
+    // touching_cache_desc - The TouchingCacheDesc to use.
     // n - number of cache lines scrubbed
     //
-    // WARNING: So, you're a super hot shit programmer who's been reading the
-    // code above and you thing to yourself, "hey, this is just like the
-    // Iterators, why don't I switch this to use them?" Don't. This is a
-    // deliberate reimplementation of what the Iterators are doing, but without
-    // the Iterators because the Iterators are what is being tested. It is
-    // thus an independent implementation for testing purposes.
-    fn verify_scrub(memory_scrubber: MemoryScrubber<TouchingCacheline>,
-        touching_cache_desc: &TouchingCacheDesc, n: usize) {
-println!(">>>> Verifying");
+    // This essentially reimplements the iterator code but in a more straight-
+    // forward way so that the two implements can verify each other.
+    fn verify_scrub(memory_scrubber: MemoryScrubber<TouchingCacheDesc, TouchingCacheline>,
+        n: usize) {
         let _cacheline_width =
             memory_scrubber.cache_desc.borrow().cacheline_width();
 
@@ -965,7 +1137,9 @@ println!(">>>> Verifying");
 
         let mut verified = 0;
 
-        for read_info in touching_cache_desc.read_infos.as_ref().unwrap() {
+        let scrubber = memory_scrubber.cache_desc.borrow();
+        let read_infos =scrubber.read_infos.as_ref().unwrap();
+        for read_info in read_infos {
             verify_read_info(&memory_scrubber, &read_info,
                 n_min_reads, n_extra_reads, verified);
             verified += memory_scrubber.cache_desc.borrow()
@@ -981,7 +1155,7 @@ println!(">>>> Verifying");
     //      are greater than n_min_reads by one
     // verified: The number of items in the vectors of n_reads that have already
     //       been verified
-    fn verify_read_info<'b>(memory_scrubber: &MemoryScrubber<TouchingCacheline>,
+    fn verify_read_info<'a>(memory_scrubber: &MemoryScrubber<TouchingCacheDesc, TouchingCacheline>,
         read_info: &ReadInfo, n_min_reads: usize, n_extra_reads: usize,
         mut verified: usize) {
         let cache_desc = memory_scrubber.cache_desc.borrow();
@@ -1001,12 +1175,10 @@ println!(">>>> Verifying");
         // location i in n_reads[] will be at least equal to the number of
         // complete scans of the memory area. Then, the remaining number of
         // items in the scan will be one larger.
-println!("verify_read_info: n_min_reads {} n_extra_reads {}", n_min_reads, n_extra_reads);
         for line in 0..cache_lines {
             for i in (line..scrub_lines).step_by(cache_lines) {
-                let inc = if verified < n_extra_reads { 0 } else { 1 };
+                let inc = if verified < n_extra_reads { 1 } else { 0 };
                 let expected = n_min_reads + inc;
-println!("verify_read_info: verified {} line {} i {} n_reads[{}] {}", verified, line, i, GUARD_LINES + i, n_reads[GUARD_LINES + 1]);
                 let actual = n_reads[GUARD_LINES + i];
                 assert_eq!(actual, expected as u8);
                 verified += 1;
