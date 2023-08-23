@@ -490,8 +490,6 @@ pub struct MemoryScrubberIterator<'a, T, U> {
 }
 
 impl<'a, T: CacheDesc<U>, U: Cacheline> MemoryScrubberIterator<'a, T, U> {
-//    pub fn new(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea]) ->
-//        Result<MemoryScrubber<'a, T>, Error> {
     pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
         scrub_areas: &'a [ScrubArea]) ->
         MemoryScrubberIterator<'a, T, U> {
@@ -505,7 +503,8 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> MemoryScrubberIterator<'a, T, U> {
     }
 }
 
-impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for MemoryScrubberIterator<'_, T, U> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
+    MemoryScrubberIterator<'_, T, U> {
     type Item = *mut U;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -626,9 +625,6 @@ impl ScrubArea {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
-    use std::time::Duration;
-
     use std::cell::{RefCell};
     use std::ptr;
     use std::rc::Rc;
@@ -699,11 +695,7 @@ mod tests {
     const TOUCHING_ECCDATA_WIDTH: usize = usize::BITS as usize - 1 -
         std::mem::size_of::<TouchingECCData>() .leading_zeros() as usize;
     const TOUCHING_CACHELINE_WIDTH: usize = 3 + TOUCHING_ECCDATA_WIDTH;
-//    const TOUCHING_CACHELINE_SIZE: usize = 1 << TOUCHING_CACHELINE_WIDTH;
-/* FIXME: restore to this value
     const TOUCHING_CACHE_INDEX_WIDTH: usize = 10;
-*/
-    const TOUCHING_CACHE_INDEX_WIDTH: usize = 2;
     const TOUCHING_CACHE_LINES: usize = 1 << TOUCHING_CACHE_INDEX_WIDTH;
 
     // GUARD_LINES - Number of cache line size items we allocate but don't
@@ -719,12 +711,14 @@ mod tests {
 
     // TouchingECCData - The data size used to compute the ECC for basic tests
     type TouchingECCData = u64;
+    const TOUCHING_ECC_DATA_SIZE: usize =
+        std::mem::size_of::<TouchingECCData>();
 
     // TouchingCacheline - the data type of a cache line
     #[repr(C)]
     struct TouchingCacheline {
         data:   [TouchingECCData;
-            (1 << TOUCHING_CACHELINE_WIDTH) / std::mem::size_of::<TouchingECCData>()],
+            (1 << TOUCHING_CACHELINE_WIDTH) / TOUCHING_ECC_DATA_SIZE],
     }
 
     impl Cacheline for TouchingCacheline {}
@@ -879,10 +873,12 @@ mod tests {
             read_info.n_reads.as_mut().unwrap()
         }
 
-        fn find_read_info<'a>(&'a mut self, cacheline_ptr: *const TouchingCacheline) ->
+        fn find_read_info<'a>(&'a mut self,
+            cacheline_ptr: *const TouchingCacheline) ->
             &'a mut ReadInfo {
             let cacheline_addr = cacheline_ptr as Addr;
-            let read_infos: &mut Vec<ReadInfo> = self.read_infos.as_mut().unwrap();
+            let read_infos: &mut Vec<ReadInfo> =
+                self.read_infos.as_mut().unwrap();
             
             for search_read_info in read_infos.iter_mut() {
                 let scrub_area = &search_read_info.mem.scrub_area;
@@ -1160,23 +1156,6 @@ mod tests {
         };
 
         verify_scrub(&memory_scrubber, n >> cacheline_width);
-
-        // This is used to keep mem_area from being deallocated before we're
-        // done
-        eprintln!("Wrap up:");
-        for read_info in cache_desc.read_infos.as_ref().unwrap() {
-            eprintln!("mem_area.len() {} mem_area[{}] {}",
-                read_info.mem.mem_area.len(),
-                 0, read_info.mem.mem_area[0]);
-            assert_ne!(read_info.mem.mem_area.len(), 0);
-            eprintln!("n_reads.len() {} n_reads[{}] {}", 
-                read_info.n_reads.as_ref().unwrap().len(),
-                GUARD_LINES, read_info.n_reads.as_ref().unwrap()[GUARD_LINES]);
-            assert_ne!(read_info.n_reads.as_ref().unwrap().len(), 0);
-        }
-
-        thread::sleep(Duration::from_secs(1));
-
     }
 
     // Verify the proper locations were hit
@@ -1251,9 +1230,6 @@ mod tests {
                 let inc = if verified < n_extra_reads { 1 } else { 0 };
                 let expected: NRead = n_min_reads + inc;
                 let actual = n_reads[GUARD_LINES + i];
-if actual != expected {
-println!("verify_read_info: FAILED: verified {} i {} GUARD_LINES + i {} n_reads {:p}", verified, i, GUARD_LINES + i, &n_reads[0]);
-}
                 assert_eq!(actual, expected as u8);
                 verified += 1;
                 if verified == verified_end {
