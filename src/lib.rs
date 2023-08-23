@@ -1,285 +1,285 @@
-/// This is code for a memory scrubber.
-///
-/// INTRODUCTION
-/// ============
-/// What is a memory scrubber and why would you use one?
-///
-/// A memory scrubber is simply a piece of hardware or software that reads all
-/// bytes from a section of memory, usually from all of memory. This is an
-/// implementation of a software memory scrubber. When a processor reads from
-/// memory protected by an error correction code (ECC), it checks to see if
-/// there are errors in the piece of memory it has read. If so, in hardware or
-/// software, the ECC is used to correct the errors and the corrected value
-/// used to replace the bad value.
-///
-/// ECCs are limited in the number of errors they can correct. These errors
-/// generally accumulate over time. So long as memory is read often enough,
-/// correction is applied with enough frequency that the number of errors
-/// stays within the bounds of what is correctable. However, a piece of
-/// memory that is rarely accessed can accumulate multiple errors. When that
-/// memory is eventually used, it will not be possible to determine the corrected
-/// value and a fatal error will result. This is where a memory scrubber comes
-/// in.
-///
-/// In general, memory is scrubbed at a rate high enough that the number of
-/// accumulated errors remains low enough that the number of uncorrectable
-/// errors is extremely low. Since it isn't possible to predict which areas of
-/// memory are read frequently enough to avoid error accumulation, the usual
-/// practice is to scan all of memory. With modern systems, this can be quite be
-/// a large amount of work and the scrubbing work is broken into smaller pieces
-/// to avoid any significant amount of performance impact.
-///
-/// The choice of how often memory is scrubbed depends on:
-/// o    The probability that an uncorrectable number of errors will accumulate
-///      in a particular section
-/// o    How many sections of memory are present in the system
-/// o    The goal for the probability that a fault due to an uncorrectable
-///      number of errors anywhere in memory will occur.
-///
-/// Choosing how the scrubbing work is divided into smaller piece depends on
-/// many implementation details, like:
-/// o    Will the scrubbing be done with preemption blocked?
-/// o    How long does it take to scrub each section of memory?
-/// o    What is the overhead of entering and leaving the scrubbing code each
-///      time it is run?
-///
-/// One key performance impact of memory scrubbing is that read memory will
-/// evict the memory cache contents being used by other software on the system,
-/// with modified cache lines being written to memory.  When that software
-/// resumes, it will have to re-read all the data it wants to use. This may
-/// cause a substantial performance impact all at once.  This library is written
-/// to perform its reads all of memory corresponding to a single cache line at
-/// a time. If memory scrubbing is broken into smaller chunks, data will be
-/// evicted from only a few cache lines each time scrubbing is done, producing
-/// a more even performance impact.
-///
-/// CACHE ORGANIZATION AND ADDRESSES
-/// ================================
-///
-/// This code assumes that an address can be broken into three parts:
-///
-///       _____________________________________________________________
-///      |                                |               |            |
-///      |     Address upper bits         |  Cache index  | Cache line |
-///      |                                |               |   index    |
-///      |________________________________|_______________|____________|
-///
-/// The cache index is the index of the cache line in the cache. The cache
-/// line index is the index of a particular byte in the cache line indicated
-/// by the cache index. The upper bits of the address might be used to select
-/// a specific way within the cache line specified by the cache index but don't
-/// usually otherwise participate in cache operations.
-///
-/// USAGE
-/// =====
-/// FIXME; This all has to be reviewed.
-/// To use this, it recommended you do the following:
-///
-/// 1.   Determine a suitable data type to represent the size of object that
-///      is used by the unit the computes the ECC. This is probably either u32
-///      or u64, and we'll call it ECCData here, though you can use anything
-///      appropriate to your error correction hardware.
-///
-/// 2.   Define the structure of a cache line by implementing Cacheline for
-///      the particular layout for your processor. We'll call the structure
-///      MyCacheline. It usually the case that cache lines are arrays of ECCData
-///      items, such as:
-///
-///          #[repr(C)]
-///          struct MyCacheline {
-///              data: [ECCData; 8];
-///          }
-///
-///      Since many systems have more than one level of cache memory, note
-///      that this should be the longest cache line in in the system.
-///
-/// 3.   Determine the address of the first and last bytes of the memory area
-///      which you want to scrub. Call these my_start and my_end. The start
-///      must be a multiple of the cache line size, the end must be one less
-///      than a multiple of the cache line size. If your cache has multiple ways
-///      (likely), the cache line size is the number of bytes in a single way.
-///
-/// 3.   Create a structure that holds definitions of your cache. This is
-///      an implementation of the BaseCacheDesc trait. For example purposes, call
-///      this MyBaseCacheDesc. In most cases, the default functions provide
-///      everything you need, so only things you need to define are the
-///      following:
-///
-///      a.  The cache_index_width() function, which returns the number of
-///          bits in the cache index portion of an address. For example, a
-///          ten-bit wide cache index would be implemented by:
-///
-///              fn cache_index_width(&self) -> usize {
-///                  10
-///              }
-///
-///      b.  A function that will cause all bytes in a cache line to be read
-///          and checked for a correct ECC.  If the entire cache is read when
-///          any element is read, this can be done with a minimal amount of
-///          unsafe code:
-///
-///              fn read_cacheline(&mut self, cacheline_ptr: *const MyCacheline) {
-///                  // Get a safe reference to the cache line
-///                  let cacheline = unsafe {
-///                      &*cacheline_ptr
-///                  };
-///                  // Get a reference to the first element
-///                  let cacheline_data = &cacheline.data[0];
-///                  // Read from the first element
-///                  let _dummy = unsafe {
-///                      ptr::read(cacheline_data)
-///                  };
-///              }
-///
-///          There is a conceivable architecture in which only part of the
-///          longest cache line will be read when a single element is read.
-///          Since any memory not read will not be checked for errors, it is
-///          important that this function implement a full cache line read.
-///          Check your processor's reference manual to determine how to do
-///          this.
-///
-/// 4.   Create a new MemoryScrubber:
-///
-///          let scrubber = match MemoryScrubber::<MyCacheline>::
-///              new(&MyBaseCacheDesc::<MyCacheline> {...}, my_start, my_end) {
-///              Err(e) => ...
-///
-/// 5.   Scrub some number of bytes. You could scrub a quarter of the memory area
-///      with:
-///
-///          match scrubber.scrub(size / 4) {
-///              Err(e) => ...
-///
-///      The size passed to scrub_scrub_areIa() must be a multiple of the cache
-///      line size.
-///
-/// BREAKING UP SCANS
-/// =================
-/// The decision of how to break up a single scan of all of memory depends on
-/// system factors such as:
-/// o    Is the scan preemptible?
-/// o    Does the scan cause a context switch and how many can be tolerated
-///      in a given interval?
-/// o    What is the performance impact of evicting and reloading the section
-///      of cache corresponding to the scrubbed memory.
-///
-/// FREQUENCY OF SCANS
-/// ==================
-/// Start by determining the number of errors an ECC unit that operates on
-/// words with w bits can correct.
-///
-/// GPT4 Query
-/// ----------
-///  Assume a memory with S words of W bits, with the probability that a single
-///  bit will be flipped in time Tf is P. What is probability that at least one
-///  word will have more than N bits flipped in the interval T?
-///
-/// Unedited answer (has not yet been verified)
-/// -------------------------------------------
-///  The problem you're describing involves complex probabilities and involves
-///  calculations related to binomial distributions. While there isn't a single
-///  "mathematical function" that directly provides the answer, you can break
-///  down the problem into components based on probability theory. Here's a
-///  breakdown of the approach in mathematical terms:
-///
-///  Let:
-///
-///  - `S` be the number of words.
-///  - `W` be the number of bits in a word.
-///  - `P` be the probability that a single bit will be flipped in time Tf.
-///  - `N` be the maximum number of flipped bits in a word.
-///  - `k` be the number of bits flipped in a word (0 <= k <= W).
-///
-///  The probability that exactly `k` bits are flipped in a single word can be
-///  calculated using the binomial distribution formula:
-///
-///  ```
-///  P(k) = C(W, k) * (1 - P)^(W - k) * P^k
-///  ```
-///
-///  Where `C(W, k)` is the binomial coefficient, given by:
-///
-///  ```
-///  C(W, k) = W! / (k! * (W - k)!)
-///  ```
-///
-///  The probability that a single word doesn't have more than `N` bits flipped
-///  is the sum of probabilities for `k` from 0 to `N`:
-///
-///  ```
-///  P_single_word = Σ(P(k)) for k = 0 to N
-///  ```
-///
-///  Finally, the probability that at least one word has more than `N` bits
-///  flipped in the interval T can be calculated using the complement rule:
-///
-///  ```
-///  P_at_least_one_word = 1 - (1 - P_single_word)^S
-///  ```
-///
-///  Keep in mind that these formulas involve factorials and exponentials, which
-///  can lead to large computations for larger values of `S`, `W`, and `N`. You
-///  might need to use specialized libraries or numerical approximations if you
-///  intend to calculate these probabilities for significant values of these
-///  parameters.
-///
-/// ChatGPT Result For Determination Of The Time Until The First Word Goes Bad
-/// --------------------------------------------------------------------------
-///  To compute the time interval for a given `P_at_least_one_word`, you would
-///  need to rearrange the formula for `P_at_least_one_word` to solve for the
-///  time interval `T`:
-///
-///  ```
-///  P_at_least_one_word = 1 - (1 - P_single_word)^S
-///  ```
-///
-///  Let's rearrange the formula:
-///
-///  ```
-///  1 - P_at_least_one_word = (1 - P_single_word)^S
-///  ```
-///
-///  ```
-///  T = (-ln(1 - P_at_least_one_word)) / ln(1 - P_single_word)
-///  ```
-///
-///  In this formula, `ln` represents the natural logarithm function. You can
-///  use Rust's `f64` math functions to compute this.
-///
-///  Here's how you can implement it in Rust:
-///
-///  ```rust
-///  fn compute_time_interval(P_at_least_one_word: f64, P_single_word: f64, S: u32) -> f64 {
-///      let numerator = -(1.0 - P_at_least_one_word).ln();
-///      let denominator = (1.0 - P_single_word).ln();
-///
-///      numerator / (denominator * f64::from(S))
-///  }
-///
-///  fn main() {
-///      let P_at_least_one_word = 0.9; // Desired probability
-///      let P_single_word = 0.01; // Probability for a single word
-///      let S = 10; // Number of words
-///
-///      let time_interval = compute_time_interval(P_at_least_one_word, P_single_word, S);
-///      println!("Time Interval: {}", time_interval);
-///  }
-///  ```
-///
-///  Replace the values of `P_at_least_one_word`, `P_single_word`, and `S` with
-///  your specific values. Keep in mind that these calculations might not be
-///  feasible for very small values of `P_at_least_one_word` or `P_single_word`
-///  due to the precision of floating-point arithmetic. Additionally, the `ln`
-///  function might return NaN (Not-a-Number) for certain inputs, so you should
-///  handle potential edge cases in your code.
-///
-/// So, that determines how often the entire memory must be scanned. Note that
-/// above, S is the number of words of memory. The total number of 8-bit bytes in
-/// memory is S * (W / 8).
-///
-/// NOTE: The above assumes that, once a bit is flipped, it stays flipped. The
-/// probability of a bit being inverted, then inverted again is small enough
-/// that it can be ignored.
+// This is code for a memory scrubber.
+//
+// INTRODUCTION
+// ============
+// What is a memory scrubber and why would you use one?
+//
+// A memory scrubber is simply a piece of hardware or software that reads all
+// bytes from a section of memory, usually from all of memory. This is an
+// implementation of a software memory scrubber. When a processor reads from
+// memory protected by an error correction code (ECC), it checks to see if
+// there are errors in the piece of memory it has read. If so, in hardware or
+// software, the ECC is used to correct the errors and the corrected value
+// used to replace the bad value.
+//
+// ECCs are limited in the number of errors they can correct. These errors
+// generally accumulate over time. So long as memory is read often enough,
+// correction is applied with enough frequency that the number of errors
+// stays within the bounds of what is correctable. However, a piece of
+// memory that is rarely accessed can accumulate multiple errors. When that
+// memory is eventually used, it will not be possible to determine the corrected
+// value and a fatal error will result. This is where a memory scrubber comes
+// in.
+//
+// In general, memory is scrubbed at a rate high enough that the number of
+// accumulated errors remains low enough that the number of uncorrectable
+// errors is extremely low. Since it isn't possible to predict which areas of
+// memory are read frequently enough to avoid error accumulation, the usual
+// practice is to scan all of memory. With modern systems, this can be quite be
+// a large amount of work and the scrubbing work is broken into smaller pieces
+// to avoid any significant amount of performance impact.
+//
+// The choice of how often memory is scrubbed depends on:
+// o    The probability that an uncorrectable number of errors will accumulate
+//      in a particular section
+// o    How many sections of memory are present in the system
+// o    The goal for the probability that a fault due to an uncorrectable
+//      number of errors anywhere in memory will occur.
+//
+// Choosing how the scrubbing work is divided into smaller piece depends on
+// many implementation details, like:
+// o    Will the scrubbing be done with preemption blocked?
+// o    How long does it take to scrub each section of memory?
+// o    What is the overhead of entering and leaving the scrubbing code each
+//      time it is run?
+//
+// One key performance impact of memory scrubbing is that read memory will
+// evict the memory cache contents being used by other software on the system,
+// with modified cache lines being written to memory.  When that software
+// resumes, it will have to re-read all the data it wants to use. This may
+// cause a substantial performance impact all at once.  This library is written
+// to perform its reads all of memory corresponding to a single cache line at
+// a time. If memory scrubbing is broken into smaller chunks, data will be
+// evicted from only a few cache lines each time scrubbing is done, producing
+// a more even performance impact.
+//
+// CACHE ORGANIZATION AND ADDRESSES
+// ================================
+//
+// This code assumes that an address can be broken into three parts:
+//
+//       _____________________________________________________________
+//      |                                |               |            |
+//      |     Address upper bits         |  Cache index  | Cache line |
+//      |                                |               |   index    |
+//      |________________________________|_______________|____________|
+//
+// The cache index is the index of the cache line in the cache. The cache
+// line index is the index of a particular byte in the cache line indicated
+// by the cache index. The upper bits of the address might be used to select
+// a specific way within the cache line specified by the cache index but don't
+// usually otherwise participate in cache operations.
+//
+// USAGE
+// =====
+// FIXME; This all has to be reviewed.
+// To use this, it recommended you do the following:
+//
+// 1.   Determine a suitable data type to represent the size of object that
+//      is used by the unit the computes the ECC. This is probably either u32
+//      or u64, and we'll call it ECCData here, though you can use anything
+//      appropriate to your error correction hardware.
+//
+// 2.   Define the structure of a cache line by implementing Cacheline for
+//      the particular layout for your processor. We'll call the structure
+//      MyCacheline. It usually the case that cache lines are arrays of ECCData
+//      items, such as:
+//
+//          #[repr(C)]
+//          struct MyCacheline {
+//              data: [ECCData; 8];
+//          }
+//
+//      Since many systems have more than one level of cache memory, note
+//      that this should be the longest cache line in in the system.
+//
+// 3.   Determine the address of the first and last bytes of the memory area
+//      which you want to scrub. Call these my_start and my_end. The start
+//      must be a multiple of the cache line size, the end must be one less
+//      than a multiple of the cache line size. If your cache has multiple ways
+//      (likely), the cache line size is the number of bytes in a single way.
+//
+// 3.   Create a structure that holds definitions of your cache. This is
+//      an implementation of the BaseCacheDesc trait. For example purposes, call
+//      this MyBaseCacheDesc. In most cases, the default functions provide
+//      everything you need, so only things you need to define are the
+//      following:
+//
+//      a.  The cache_index_width() function, which returns the number of
+//          bits in the cache index portion of an address. For example, a
+//          ten-bit wide cache index would be implemented by:
+//
+//              fn cache_index_width(&self) -> usize {
+//                  10
+//              }
+//
+//      b.  A function that will cause all bytes in a cache line to be read
+//          and checked for a correct ECC.  If the entire cache is read when
+//          any element is read, this can be done with a minimal amount of
+//          unsafe code:
+//
+//              fn read_cacheline(&mut self, cacheline_ptr: *const MyCacheline) {
+//                  // Get a safe reference to the cache line
+//                  let cacheline = unsafe {
+//                      &*cacheline_ptr
+//                  };
+//                  // Get a reference to the first element
+//                  let cacheline_data = &cacheline.data[0];
+//                  // Read from the first element
+//                  let _dummy = unsafe {
+//                      ptr::read(cacheline_data)
+//                  };
+//              }
+//
+//          There is a conceivable architecture in which only part of the
+//          longest cache line will be read when a single element is read.
+//          Since any memory not read will not be checked for errors, it is
+//          important that this function implement a full cache line read.
+//          Check your processor's reference manual to determine how to do
+//          this.
+//
+// 4.   Create a new MemoryScrubber:
+//
+//          let scrubber = match MemoryScrubber::<MyCacheline>::
+//              new(&MyBaseCacheDesc::<MyCacheline> {...}, my_start, my_end) {
+//              Err(e) => ...
+//
+// 5.   Scrub some number of bytes. You could scrub a quarter of the memory area
+//      with:
+//
+//          match scrubber.scrub(size / 4) {
+//              Err(e) => ...
+//
+//      The size passed to scrub_scrub_areIa() must be a multiple of the cache
+//      line size.
+//
+// BREAKING UP SCANS
+// =================
+// The decision of how to break up a single scan of all of memory depends on
+// system factors such as:
+// o    Is the scan preemptible?
+// o    Does the scan cause a context switch and how many can be tolerated
+//      in a given interval?
+// o    What is the performance impact of evicting and reloading the section
+//      of cache corresponding to the scrubbed memory.
+//
+// FREQUENCY OF SCANS
+// ==================
+// Start by determining the number of errors an ECC unit that operates on
+// words with w bits can correct.
+//
+// GPT4 Query
+// ----------
+//  Assume a memory with S words of W bits, with the probability that a single
+//  bit will be flipped in time Tf is P. What is probability that at least one
+//  word will have more than N bits flipped in the interval T?
+//
+// Unedited answer (has not yet been verified)
+// -------------------------------------------
+//  The problem you're describing involves complex probabilities and involves
+//  calculations related to binomial distributions. While there isn't a single
+//  "mathematical function" that directly provides the answer, you can break
+//  down the problem into components based on probability theory. Here's a
+//  breakdown of the approach in mathematical terms:
+//
+//  Let:
+//
+//  - `S` be the number of words.
+//  - `W` be the number of bits in a word.
+//  - `P` be the probability that a single bit will be flipped in time Tf.
+//  - `N` be the maximum number of flipped bits in a word.
+//  - `k` be the number of bits flipped in a word (0 <= k <= W).
+//
+//  The probability that exactly `k` bits are flipped in a single word can be
+//  calculated using the binomial distribution formula:
+//
+//  ```
+//  P(k) = C(W, k) * (1 - P)^(W - k) * P^k
+//  ```
+//
+//  Where `C(W, k)` is the binomial coefficient, given by:
+//
+//  ```
+//  C(W, k) = W! / (k! * (W - k)!)
+//  ```
+//
+//  The probability that a single word doesn't have more than `N` bits flipped
+//  is the sum of probabilities for `k` from 0 to `N`:
+//
+//  ```
+//  P_single_word = Σ(P(k)) for k = 0 to N
+//  ```
+//
+//  Finally, the probability that at least one word has more than `N` bits
+//  flipped in the interval T can be calculated using the complement rule:
+//
+//  ```
+//  P_at_least_one_word = 1 - (1 - P_single_word)^S
+//  ```
+//
+//  Keep in mind that these formulas involve factorials and exponentials, which
+//  can lead to large computations for larger values of `S`, `W`, and `N`. You
+//  might need to use specialized libraries or numerical approximations if you
+//  intend to calculate these probabilities for significant values of these
+//  parameters.
+//
+// ChatGPT Result For Determination Of The Time Until The First Word Goes Bad
+// --------------------------------------------------------------------------
+//  To compute the time interval for a given `P_at_least_one_word`, you would
+//  need to rearrange the formula for `P_at_least_one_word` to solve for the
+//  time interval `T`:
+//
+//  ```
+//  P_at_least_one_word = 1 - (1 - P_single_word)^S
+//  ```
+//
+//  Let's rearrange the formula:
+//
+//  ```
+//  1 - P_at_least_one_word = (1 - P_single_word)^S
+//  ```
+//
+//  ```
+//  T = (-ln(1 - P_at_least_one_word)) / ln(1 - P_single_word)
+//  ```
+//
+//  In this formula, `ln` represents the natural logarithm function. You can
+//  use Rust's `f64` math functions to compute this.
+//
+//  Here's how you can implement it in Rust:
+//
+//  ```rust
+//  fn compute_time_interval(P_at_least_one_word: f64, P_single_word: f64, S: u32) -> f64 {
+//      let numerator = -(1.0 - P_at_least_one_word).ln();
+//      let denominator = (1.0 - P_single_word).ln();
+//
+//      numerator / (denominator * f64::from(S))
+//  }
+//
+//  fn main() {
+//      let P_at_least_one_word = 0.9; // Desired probability
+//      let P_single_word = 0.01; // Probability for a single word
+//      let S = 10; // Number of words
+//
+//      let time_interval = compute_time_interval(P_at_least_one_word, P_single_word, S);
+//      println!("Time Interval: {}", time_interval);
+//  }
+//  ```
+//
+//  Replace the values of `P_at_least_one_word`, `P_single_word`, and `S` with
+//  your specific values. Keep in mind that these calculations might not be
+//  feasible for very small values of `P_at_least_one_word` or `P_single_word`
+//  due to the precision of floating-point arithmetic. Additionally, the `ln`
+//  function might return NaN (Not-a-Number) for certain inputs, so you should
+//  handle potential edge cases in your code.
+//
+// So, that determines how often the entire memory must be scanned. Note that
+// above, S is the number of words of memory. The total number of 8-bit bytes in
+// memory is S * (W / 8).
+//
+// NOTE: The above assumes that, once a bit is flipped, it stays flipped. The
+// probability of a bit being inverted, then inverted again is small enough
+// that it can be ignored.
 
 use std::cell::RefCell;
 use std::iter;
@@ -588,8 +588,7 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for ScrubAreaIterator<'a,
             // This, modulo the cache size, is the cache index for the addresses
             // in a pass through that cache index.
             let cd = &self.cache_desc.borrow() as &T;
-            let start_index = cd.cache_index(self.scrub_area.start);
-            let offset = start_index + self.index + self.offset;
+            let offset = self.index + self.offset;
             let size = cd.size_in_cachelines(&self.scrub_area);
 
             if offset < size {
@@ -850,17 +849,19 @@ mod tests {
             touching_cache_desc
         }
 
-        // Compute the index into the n_read array for this address
+        // Compute the index into the n_read array for this address. This
+        // array has GUARD_LINES elements surrounding the actual counts.
         // cacheline_ptr: Pointer to the address
-        fn read_index(&mut self, cacheline_ptr: *const TouchingCacheline) -> usize {
+        fn read_index(&mut self, cacheline_ptr: *const TouchingCacheline) ->
+            usize {
             let cacheline_addr = cacheline_ptr as Addr;
             let cacheline_size = {
                 self.cacheline_size ()
             };
 
             let read_info = self.find_read_info(cacheline_ptr);
-            let n_n_reads = read_info.mem.mem_area.len() /
-                std::mem::size_of::<NRead>();
+            let n_read_size = std::mem::size_of::<NRead>();
+            let n_n_reads = read_info.mem.mem_area.len() / n_read_size;
             let start_addr = read_info.mem.scrub_area.start as Addr;
 
             let offset = (cacheline_addr - start_addr) / cacheline_size;
@@ -914,8 +915,6 @@ mod tests {
         }
 
         fn read_cacheline(&mut self, cacheline_ptr: *const TouchingCacheline) {
-            let s = self as *const dyn CacheDesc<TouchingCacheline>;
-
             // Do the read
             let cacheline = unsafe {
                 &*cacheline_ptr
@@ -934,7 +933,6 @@ mod tests {
             };
 
             n_reads[index] += 1;
-eprintln!("read_cacheline: cache_desc {:p} n_reads {:x}", s, n_reads.as_ptr() as usize);
         }
     }
 
@@ -1056,7 +1054,7 @@ eprintln!("read_cacheline: cache_desc {:p} n_reads {:x}", s, n_reads.as_ptr() as
         test_scrubber(&[cacheline_size * TOUCHING_SANDBOX_SIZE], first_area);
     }
 
-    #[test] #[ignore]
+    #[test]
     fn test_touch_many() {
         const MANY: usize = 50;
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
@@ -1078,7 +1076,7 @@ eprintln!("read_cacheline: cache_desc {:p} n_reads {:x}", s, n_reads.as_ptr() as
         test_scrubber(&[cacheline_size * TOUCHING_SANDBOX_SIZE], first_area);
     }
 
-    #[test] #[ignore]
+    #[test]
     fn test_touch_more_many() {
         const MANY: usize = 72;
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
@@ -1086,7 +1084,7 @@ eprintln!("read_cacheline: cache_desc {:p} n_reads {:x}", s, n_reads.as_ptr() as
         test_scrubber(&[cacheline_size * TOUCHING_SANDBOX_SIZE], first_area);
     }
 
-    #[test] #[ignore]
+    #[test]
     fn test_big() {
         const MEM_AREA_SIZE: usize = 1 * 1024 * 1024 * 1024;
 
@@ -1156,14 +1154,6 @@ eprintln!("read_cacheline: cache_desc {:p} n_reads {:x}", s, n_reads.as_ptr() as
                 Ok(scrubber) => scrubber,
             }
         };
-{
-let cd = &memory_scrubber.cache_desc.borrow();
-let read_infos_ref = &cd.read_infos;
-let read_infos = read_infos_ref.as_ref().unwrap();
-let n_reads = &read_infos[0].n_reads;
-// Good
-println!("test_scrubber1: cache_desc {:p} n_reads {:p}", cd, &n_reads.as_ref().unwrap()[0]);
-}
 
         if let Err(e) = memory_scrubber.scrub(n) {
             panic!("scrub failed: {}", e);
