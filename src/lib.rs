@@ -538,7 +538,8 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
 // offset:      Number of cache lines between the first address corresponding to
 //              the given cache index and the address that will be read. This is
 //              a multiple of the number cache lines in the cache.
-// _marker:     Forces U to be recognized as used. FIXME: remove _marker
+// _marker:     Forces U to be recognized as used because something in the
+//              compiler doesn't realize this. FIXME: remove _marker
 pub struct ScrubAreaIterator<'a, T, U> {
     cache_desc: Rc<RefCell<&'a mut T>>,
     scrub_area: ScrubArea,
@@ -893,15 +894,7 @@ mod tests {
 
             // If we failed, it's because the cache addess wasn't in any of
             // the ScrubAreas.
-            eprintln!("Unable to find address {:x} in:", cacheline_addr);
-/* FIXME: figure this out
-            for print_read_info in read_infos.iter_mut() {
-                let scrub_area = &print_read_info.mem.scrub_area;
-                eprintln!("[{:x}-{:x}", scrub_area.start as Addr,
-                    scrub_area.end as Addr);
-            }
-*/
-            panic!("Unable to continue");
+            panic!("Unable to find address {:x}", cacheline_addr);
         }
     }
 
