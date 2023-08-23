@@ -10,8 +10,110 @@
 // memory protected by an error correction code (ECC), it checks to see if
 // there are errors in the piece of memory it has read. If so, in hardware or
 // software, the ECC is used to correct the errors and the corrected value
-// used to replace the bad value.
+// used to replace the bad value. The memory scrubber is run frequently
+// enough that errors don't have a chance to accumulate
 //
+// This memory scrubber is specifically designed to allow the reduction of
+// the impact of memory scrubbing. A simple memory scrubber might sequentially
+// touch data one cache line apart. After touching a product of the number
+// of cache lines in the cache and the number of ways per cache line, the
+// previous contents of the cache will be complete evicted, requiring reloading
+// when returning to the previous task. With 1024 cache lines and 4 ways,
+// complete eviction will occur after 4096 touches.
+//
+// This memory scrubber is cache aware. As such, it scans through all addresses
+// for a single cache line before advancing to the next cache line. With
+// a 1 GB memory, 1024 cache lines, and a 64-byte cache line, it takes
+// 16384 touches to evict a single cache line and 1677216 touches to evict
+// the entire cache. This is a rate 2.4% of the simple approach.
+//
+// Using the cache aware memory scrubber is only useful if only part of
+// memory is scrubbed at a time, but the rate of accumulation of error is
+// slow enough that this is a very reasonable thing to do.
+//
+// QUICK START
+// ===========
+// 1.   Determine values for and define the following:
+//
+//      a.  The integer type that your ECC unit operates on.
+//
+//          type MyECCData = u64;
+//
+//      b.  The number of MyECC items that fit in the longest cache line of any
+//          cache level in uour sysem.
+//
+//              const MY_CACHELINE_ITEMS: usize = 8;
+//
+//      c.  The number of bits in the address used for the cache index for the
+//          longest cache line in your sysem.
+//
+//              const MY_CACHE_INDEX_WIDTH: usize = 10;
+//
+//      d.  A Cacheline structure that uses the above to define what a cache
+//          line looks like. This has a very specific memory layout, so it
+//          must be specified as a C structure:
+//
+//              #[repr(C)]
+//              struct MyCacheline {
+//                  data:   [MyECCData; MY_CACHELINE_ITEMS],
+//              }
+//
+//              impl Cacheline for BasicCacheline {}
+//
+//
+// 2.   Define and implement a CacheDesc structure for your cache line. This
+//      requires implementing the function cache_index_width(), which returns
+//      the cache line width determined above, and read_cacheline(), which
+//      causes the entire cacheline to be read:
+//
+//          struct MyCacheDesc {
+//              data:   [MyECCData; MyCachelineItems],
+//          }
+//
+//          impl CacheDesc for MyCacheDesc {
+//              fn cache_index_width(&self) -> usize { self.cache_index_width }
+//              fn read_cacheline(&mut self,
+//                  cacheline_ptr: *const MyCacheline) {
+//                  let cacheline = unsafe { &*cacheline_ptr };
+//                  let cacheline_data = &cacheline.data[0];
+//                  let _dummy = unsafe { ptr::read(cacheline_data) };
+//              }
+//          }
+//
+//          static MY_CACHE_DESC: MyCacheDesc = MyCacheDesc {
+//              cache_index_width:  MY_CACHE_INDEX_WIDTH,
+//          };
+// 
+// 3.   Create an array with the virtual addresses of all memory areas to
+//      scrub:
+//
+//          let my_scrub_addrs = [
+//              ScrubArea {
+//                  start: 0xa0000000 as *const u8,
+//                  end: 0xbfffffff as *const u8,
+//              },
+//              ScrubArea {
+//                  start: 0xd0000000 as *const u8,
+//                  end: 0xefffffff as *const u8,
+//              },
+//          ];
+//
+// 4.   Create a new MemoryScrubber. It returns a Result<> so check for errors:
+//
+//          let scrubber =
+//              MemoryScrubber::<MyCacheDesc, MyCacheline>::new(&MY_CACHE_DESC,
+//              &my_scrub_areas);
+//
+// 5.   Scrub some number of bytes. This value must be a multiple of the cache
+//      line size (std::mem::size_of::<MyCacheline>()). It generally doesn't
+//      make sense for this to be larger than the total number of bytes in
+//      the ScrubAreas, but making it smaller allows scrubbing to be less
+//      instrusive. Be sure to check the return value for errors.
+//
+//          scrubber.scrub(512 * 1024 * 1024);
+//
+// DETAILS
+// =======
 // ECCs are limited in the number of errors they can correct. These errors
 // generally accumulate over time. So long as memory is read often enough,
 // correction is applied with enough frequency that the number of errors
@@ -21,13 +123,14 @@
 // value and a fatal error will result. This is where a memory scrubber comes
 // in.
 //
-// In general, memory is scrubbed at a rate high enough that the number of
-// accumulated errors remains low enough that the number of uncorrectable
-// errors is extremely low. Since it isn't possible to predict which areas of
-// memory are read frequently enough to avoid error accumulation, the usual
-// practice is to scan all of memory. With modern systems, this can be quite be
-// a large amount of work and the scrubbing work is broken into smaller pieces
-// to avoid any significant amount of performance impact.
+// In general, memory should be scrubbed at a rate high enough that the number
+// of accumulated errors remains low enough that the probability that there are
+// memory words with uncorrectable errors is extremely low. Since it isn't
+// possible to predict which areas of memory are read frequently enough to
+// avoid error accumulation, the usual practice is to scan all of memory. With
+// modern systems, this can be quite be a large amount of work and the
+// scrubbing work is broken into smaller pieces to avoid any significant
+// amount of performance impact.
 //
 // The choice of how often memory is scrubbed depends on:
 // o    The probability that an uncorrectable number of errors will accumulate
@@ -100,8 +203,8 @@
 //      (likely), the cache line size is the number of bytes in a single way.
 //
 // 3.   Create a structure that holds definitions of your cache. This is
-//      an implementation of the BaseCacheDesc trait. For example purposes, call
-//      this MyBaseCacheDesc. In most cases, the default functions provide
+//      an implementation of the CacheDesc trait. For example purposes, call
+//      this MyCacheDesc. In most cases, the default functions provide
 //      everything you need, so only things you need to define are the
 //      following:
 //
@@ -141,7 +244,7 @@
 // 4.   Create a new MemoryScrubber:
 //
 //          let scrubber = match MemoryScrubber::<MyCacheline>::
-//              new(&MyBaseCacheDesc::<MyCacheline> {...}, my_start, my_end) {
+//              new(&MyCacheDesc::<MyCacheline> {...}, my_start, my_end) {
 //              Err(e) => ...
 //
 // 5.   Scrub some number of bytes. You could scrub a quarter of the memory area
