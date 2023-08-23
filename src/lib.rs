@@ -1080,6 +1080,20 @@ mod tests {
 
     // Verify that an error is returned if the size is zero.
     #[test]
+    fn test_null_areas() {
+        let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
+
+        let scrub_areas = [];
+        let memory_scrubber =
+            MemoryScrubber::<BasicCacheDesc, BasicCacheline>::new(basic_cache_desc,
+            &scrub_areas);
+        assert!(memory_scrubber.is_err());
+        assert_eq!(memory_scrubber.err().unwrap(),
+            Error::NoScrubAreas);
+    }
+
+    // Verify that an error is returned if the size is zero.
+    #[test]
     fn test_zero_size() {
         let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
         let mut mem =
@@ -1125,13 +1139,6 @@ mod tests {
 
     // Verify that all specified locations are scrubbed and locations outside
     // the requested are are not touched.
-
-    // Test scrubbing:
-    // o    Zero cache lines
-    // o    One cache line
-    // o    Fifty cache lines
-    // o    The entire size of the cache area
-    // o    Double the cache area size plus fifty (test wrapping)
     #[test]
     fn test_touch_zero() {
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
@@ -1174,6 +1181,17 @@ mod tests {
         let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
         let first_area = 5 * cacheline_size * (TOUCHING_SANDBOX_SIZE + MANY);
         test_scrubber(&[cacheline_size * TOUCHING_SANDBOX_SIZE], first_area);
+    }
+
+    #[test]
+    fn test_touch_multiple_areas() {
+        const MANY: usize = 72;
+        let cacheline_size = TOUCHING_CACHE_DESC.cacheline_size();
+        let first_area = 2 * cacheline_size * (TOUCHING_SANDBOX_SIZE + MANY);
+        let second_area = cacheline_size * TOUCHING_SANDBOX_SIZE;
+        let third_area = cacheline_size * MANY;
+        let scrub_areas = [first_area, second_area, third_area];
+        test_scrubber(&scrub_areas, first_area);
     }
 
     #[test]
