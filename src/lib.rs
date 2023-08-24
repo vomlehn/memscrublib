@@ -37,8 +37,8 @@
 // QUICK START
 // ===========
 // 1.   Add the lines:
-//          use libmemscrub_arch::{BaseCacheDesc, CACHE_DESC, CacheDesc,
-//              Cacheline, MemoryScrubber, ScrubArea};
+//          use libmemscrub_arch::{BaseCacheDesc, BaseCacheline,
+//              MemoryScrubber, ScrubArea};
 //
 // 2.   Determine values for and define the following:
 //
@@ -61,11 +61,11 @@
 //          must be specified as a C structure:
 //
 //              #[repr(C)]
-//              struct MyBaseCacheline {
+//              struct MyCacheline {
 //                  data:   [MyECCData; MY_CACHELINE_ITEMS],
 //              }
 //
-//              impl BaseCacheline for MyBaseCacheline {}
+//              impl BaseCacheline for MyCacheline {}
 //
 //
 // 2.   Define and implement a BaseCacheDesc structure for your cache line. This
@@ -73,28 +73,28 @@
 //      the cache line width determined above, and read_cacheline(), which
 //      causes the entire cacheline to be read:
 //
-//          struct MyBaseCacheDesc {
+//          struct MyCacheDesc {
 //              cache_index_width: usize,
 //          }
 //
-//          impl BaseCacheDesc for MyBaseCacheDesc {
+//          impl BaseCacheDesc for MyCacheDesc {
 //              fn cache_index_width(&self) -> usize { self.cache_index_width }
 //              fn read_cacheline(&mut self,
-//                  cacheline_ptr: *const MyBaseCacheline) {
+//                  cacheline_ptr: *const MyCacheline) {
 //                  let cacheline = unsafe { &*cacheline_ptr };
 //                  let cacheline_data = &cacheline.data[0];
 //                  let _dummy = unsafe { ptr::read(cacheline_data) };
 //              }
 //          }
 //
-//          static MY_CACHE_DESC: MyBaseCacheDesc = MyBaseCacheDesc {
+//          static MY_CACHE_DESC: MyCacheDesc = MyCacheDesc {
 //              cache_index_width:  MY_CACHE_INDEX_WIDTH,
 //          };
 // 
 // 3.   Create an array with the virtual addresses of all memory areas to
 //      scrub:
 //
-//          let my_scrub_addrs = [
+//          let my_scrub_areas = [
 //              ScrubArea {
 //                  start: 0xa0000000 as *const u8,
 //                  end: 0xbfffffff as *const u8,
@@ -107,7 +107,8 @@
 //
 // 4.   The simplest thing to do is to use the autoscrub() function. The work
 //      it does can be broken down, see below. Using autoscrub() consists of:
-//      a.  Create a structure implementing the AutoScrubDesc trait. The
+//
+//      a.  Create a structure implementing the BaseAutoScrubDesc trait. The
 //          only thing that needs to be defined is a function that returns
 //          the number of bytes to be scrubbed. If it returns zero, the
 //          autoscrub() function will return:
@@ -116,20 +117,21 @@
 //                  scrub_size: usize,
 //              }
 //
-//              impl AutoScrubDesc for MyAutoScrubDesc {
+//              impl BaseAutoScrubDesc for MyAutoScrubDesc {
 //                  fn next(&mut self) -> usize {
 //                      self.scrub_size
 //                  }
 //              }
 //
-//              let mut autoscrub_desc = TestAutoScrubDesc {
+//              let mut my_autoscrub_desc = MyAutoScrubDesc {
 //                  scrub_size: my_cache_desc.cacheline_size() * 5000,
 //              };
 //
 //      c.  Invoke autoscrub():
 //
-//              let scrub = AutoScrub.autoscrub(cache_desc, &scrub_areas,
-//                  &mut autoscrub_desc)?;
+//              let mut my_cache_desc = MyCacheDesc.clone();
+//              let scrub = AutoScrub.autoscrub(&mut my_cache_desc,
+//                  &my_scrub_areas, &my_mut autoscrub_desc)?;
 //
 // DETAILS
 // =======
@@ -204,11 +206,11 @@
 //
 // 2.   Define the structure of a cache line by implementing BaseCacheline for
 //      the particular layout for your processor. We'll call the structure
-//      MyBaseCacheline. It usually the case that cache lines are arrays of ECCData
+//      MyCacheline. It usually the case that cache lines are arrays of ECCData
 //      items, such as:
 //
 //          #[repr(C)]
-//          struct MyBaseCacheline {
+//          struct MyCacheline {
 //              data: [ECCData; 8];
 //          }
 //
@@ -223,7 +225,7 @@
 //
 // 3.   Create a structure that holds definitions of your cache. This is
 //      an implementation of the BaseCacheDesc trait. For example purposes, call
-//      this MyBaseCacheDesc. In most cases, the default functions provide
+//      this MyCacheDesc. In most cases, the default functions provide
 //      everything you need, so only things you need to define are the
 //      following:
 //
@@ -240,7 +242,7 @@
 //          any element is read, this can be done with a minimal amount of
 //          unsafe code:
 //
-//              fn read_cacheline(&mut self, cacheline_ptr: *const MyBaseCacheline) {
+//              fn read_cacheline(&mut self, cacheline_ptr: *const MyCacheline) {
 //                  // Get a safe reference to the cache line
 //                  let cacheline = unsafe {
 //                      &*cacheline_ptr
@@ -262,8 +264,8 @@
 //
 // 4.   Create a new MemoryScrubber:
 //
-//          let scrubber = match MemoryScrubber::<MyBaseCacheline>::
-//              new(&MyBaseCacheDesc::<MyBaseCacheline> {...}, my_start, my_end) {
+//          let scrubber = match MemoryScrubber::<MyCacheline>::
+//              new(&MyCacheDesc::<MyCacheline> {...}, my_start, my_end) {
 //              Err(e) => ...
 //
 // 5.   Scrub some number of bytes. You could scrub a quarter of the memory area
