@@ -493,6 +493,9 @@ pub trait BaseCacheDesc<T: BaseCacheline> {
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 #[repr(C)]
 pub enum Error {
+    #[error("Internal error")]
+    InternalError,
+
     #[error("Start address must be aligned on cache line boundary")]
     UnalignedStart,
 
@@ -524,8 +527,11 @@ pub struct BaseAutoScrub<'a, T:BaseCacheDesc<U>, U:BaseCacheline> {
 impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> BaseAutoScrub<'a, T, U> {
     pub fn autoscrub(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea],
             desc: &'a mut dyn BaseAutoScrubDesc) ->
-        Result<usize, Error> {
-        let scrubber = MemoryScrubber::new(cache_desc, scrub_areas)?;
+        Result<(), Error> {
+        let scrubber = match MemoryScrubber::new(cache_desc, scrub_areas) {
+            Err(e) => return Err(e),
+            Ok(scrubber) => scrubber,
+        };
 
         let mut autoscrub = BaseAutoScrub {
             scrubber: scrubber,
@@ -535,7 +541,7 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> BaseAutoScrub<'a, T, U> {
         loop {
             let n = autoscrub.desc.next();
             if n == 0 {
-                return Ok(n);
+                return Ok(());
             }
             autoscrub.scrubber.scrub(n)?;
         }
