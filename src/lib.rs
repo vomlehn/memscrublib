@@ -409,7 +409,6 @@ use std::cell::RefCell;
 use std::iter;
 use std::marker::PhantomData;
 use std::rc::Rc;
-use thiserror::Error;
 
 // C-language interface
 //
@@ -418,7 +417,7 @@ use thiserror::Error;
 // start - lowest address of the area. Must be a multiple of the cache line size
 // end - address of the last byte of the area. Must be one less than a multiple
 //      of the cache line size
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[repr(C)]
 pub struct ScrubArea {
     pub start:              *const u8,
@@ -490,28 +489,15 @@ pub trait BaseCacheDesc<T: BaseCacheline> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Error, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[repr(C)]
 pub enum Error {
-    #[error("Internal error")]
     InternalError,
-
-    #[error("Start address must be aligned on cache line boundary")]
     UnalignedStart,
-
-    #[error("End address must be one less than a cache line boundary")]
     UnalignedEnd,
-
-    #[error("Number of bytes must be a multiple of the cache size")]
     UnalignedSize,
-
-    #[error("No ScrubAreas supplied")]
     NoScrubAreas,
-
-    #[error("ScrubArea is empty")]
     EmptyScrubArea,
-
-    #[error("Internal Error: Iterator failed")]
     IteratorFailed,
 }
 
@@ -528,21 +514,27 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> BaseAutoScrub<'a, T, U> {
     pub fn autoscrub(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea],
             desc: &'a mut dyn BaseAutoScrubDesc) ->
         Result<(), Error> {
+println!("In autoscrub()");
         let scrubber = match MemoryScrubber::new(cache_desc, scrub_areas) {
             Err(e) => return Err(e),
             Ok(scrubber) => scrubber,
         };
 
+println!("Created scrubber");
         let mut autoscrub = BaseAutoScrub {
             scrubber: scrubber,
             desc: desc,
         };
 
+println!("Running loop");
         loop {
+println!("autoscrub {:p}", &autoscrub as *const BaseAutoScrub<T, U>);
+println!("autoscrub.desc {:p}", autoscrub.desc as *const dyn BaseAutoScrubDesc);
             let n = autoscrub.desc.next();
             if n == 0 {
                 return Ok(());
             }
+println!("n {} calling autoscrub.scrubber.scrub", n);
             autoscrub.scrubber.scrub(n)?;
         }
     }
@@ -578,9 +570,11 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> MemoryScrubber<'a, T, U> {
 
         // Look for all possible errors in all ScrubAreas.
         for scrub_area in scrub_areas {
+println!("scrub_area: {:p}-{:p}", scrub_area.start, scrub_area.end);
             // The code will actually handle this just fine, but it's extra
             // effort to no benefit, so it is expected to be a user error.
             if scrub_area.start == scrub_area.end {
+println!("EmptyScrubArea");
                 return Err(Error::EmptyScrubArea);
             }
 
@@ -588,14 +582,18 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> MemoryScrubber<'a, T, U> {
             let end_addr = scrub_area.end as Addr;
 
             if (start_addr & (cacheline_size - 1)) != 0 {
+println!("cacheline_size {} low bits {}", cacheline_size, start_addr & (cacheline_size - 1));
+println!("UnalignedStart");
                 return Err(Error::UnalignedStart);
             }
 
             if (end_addr & (cacheline_size - 1)) != cacheline_size - 1 {
+println!("UnalignedEnd");
                 return Err(Error::UnalignedEnd);
             }
         }
 
+println!("Bundling cache_desc in Rc<RefCell<_>>");
         let cache_desc_rc = Rc::new(RefCell::new(cache_desc));
 
         Ok(MemoryScrubber::<'a, T, U> {
@@ -613,17 +611,19 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> MemoryScrubber<'a, T, U> {
         let cacheline_width = {
             self.cache_desc.borrow().cacheline_width()
         };
+println!("cacheline_width {}", cacheline_width);
 
         let cacheline_size = {
             self.cache_desc.borrow().cacheline_size()
         };
+println!("cacheline_size {}", cacheline_size);
 
         if (n & (cacheline_size - 1)) != 0 {
-println!("n {}", n);
             return Err(Error::UnalignedSize);
         }
 
         // Convert to the number of cachelines to scrub
+println!("n {} size_of_val(n) {}", n, std::mem::size_of_val(&n));
         let cachelines_to_scrub = n >> cacheline_width;
 
         for _i in 0..cachelines_to_scrub {
@@ -820,7 +820,7 @@ mod tests {
 
     // BasicCacheDesc - Description of the cache for basic tests
     // cache_index_width - Number of bits of the cache index.
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy)]
     struct BasicCacheDesc {
         cache_index_width:        usize,
     }
@@ -890,7 +890,7 @@ mod tests {
     // mem_area - Vec<u8> of elements that can be read by read_cacheline()
     // start - Cache size-aligned pointer of the first byte to use in mem_area
     // end - Pointer to the last byte
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     struct Mem {
         mem_area:   Vec<u8>,
         scrub_area: ScrubArea,
@@ -940,7 +940,7 @@ mod tests {
     // been read
     // mem:     Boundaries of the address covered by this structure
     // n_reads: Counters
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     struct ReadInfo {
         mem:        Mem,
         n_reads:    Option<Vec<NRead>>
@@ -973,7 +973,7 @@ mod tests {
     // cache_index_width - Number of times this cacheline was iit during the
     //      scrub
     // read_infos:          Array of ReadInfo items>
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     struct TouchingCacheDesc {
         cache_index_width:  usize,
         read_infos:         Option<Vec<ReadInfo>>,
@@ -1454,10 +1454,6 @@ mod tests {
                 let inc = if verified < n_extra_reads { 1 } else { 0 };
                 let expected: NRead = n_min_reads + inc;
                 let actual = n_reads[GUARD_LINES + i];
-                if actual != expected {
-                    println!("verified {} n_extra_reads {} n_min_reads {}",
-                        verified, n_extra_reads, n_min_reads);
-                }
                 assert_eq!(actual, expected as u8);
                 verified += 1;
                 if verified == verified_end {
