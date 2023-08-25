@@ -514,27 +514,21 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> BaseAutoScrub<'a, T, U> {
     pub fn autoscrub(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea],
             desc: &'a mut dyn BaseAutoScrubDesc) ->
         Result<(), Error> {
-println!("In autoscrub()");
         let scrubber = match MemoryScrubber::new(cache_desc, scrub_areas) {
             Err(e) => return Err(e),
             Ok(scrubber) => scrubber,
         };
 
-println!("Created scrubber");
         let mut autoscrub = BaseAutoScrub {
             scrubber: scrubber,
             desc: desc,
         };
 
-println!("Running loop");
         loop {
-println!("autoscrub {:p}", &autoscrub as *const BaseAutoScrub<T, U>);
-println!("autoscrub.desc {:p}", autoscrub.desc as *const dyn BaseAutoScrubDesc);
             let n = autoscrub.desc.next();
             if n == 0 {
                 return Ok(());
             }
-println!("n {} calling autoscrub.scrubber.scrub", n);
             autoscrub.scrubber.scrub(n)?;
         }
     }
@@ -570,11 +564,9 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> MemoryScrubber<'a, T, U> {
 
         // Look for all possible errors in all ScrubAreas.
         for scrub_area in scrub_areas {
-println!("scrub_area: {:p}-{:p}", scrub_area.start, scrub_area.end);
             // The code will actually handle this just fine, but it's extra
             // effort to no benefit, so it is expected to be a user error.
             if scrub_area.start == scrub_area.end {
-println!("EmptyScrubArea");
                 return Err(Error::EmptyScrubArea);
             }
 
@@ -582,18 +574,14 @@ println!("EmptyScrubArea");
             let end_addr = scrub_area.end as Addr;
 
             if (start_addr & (cacheline_size - 1)) != 0 {
-println!("cacheline_size {} low bits {}", cacheline_size, start_addr & (cacheline_size - 1));
-println!("UnalignedStart");
                 return Err(Error::UnalignedStart);
             }
 
             if (end_addr & (cacheline_size - 1)) != cacheline_size - 1 {
-println!("UnalignedEnd");
                 return Err(Error::UnalignedEnd);
             }
         }
 
-println!("Bundling cache_desc in Rc<RefCell<_>>");
         let cache_desc_rc = Rc::new(RefCell::new(cache_desc));
 
         Ok(MemoryScrubber::<'a, T, U> {
@@ -611,19 +599,16 @@ println!("Bundling cache_desc in Rc<RefCell<_>>");
         let cacheline_width = {
             self.cache_desc.borrow().cacheline_width()
         };
-println!("cacheline_width {}", cacheline_width);
 
         let cacheline_size = {
             self.cache_desc.borrow().cacheline_size()
         };
-println!("cacheline_size {}", cacheline_size);
 
         if (n & (cacheline_size - 1)) != 0 {
             return Err(Error::UnalignedSize);
         }
 
         // Convert to the number of cachelines to scrub
-println!("n {} size_of_val(n) {}", n, std::mem::size_of_val(&n));
         let cachelines_to_scrub = n >> cacheline_width;
 
         for _i in 0..cachelines_to_scrub {
@@ -710,9 +695,9 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> iter::Iterator for
 // ScrubAreaIterator to scan a ScrubArea, keeping on a single cache line as
 // long as possible.
 //
+// cache_desc   Description of the cache
 // scrub_area:  Specifies the address of the scrub area
-// index:       Value that, when added to the cache index value of start, yields
-//              the index of the cache line being scrubbed
+// index:       Iterates between 0 and the number of cache lines in the cache
 // offset:      Number of cache lines between the first address corresponding to
 //              the given cache index and the address that will be read. This is
 //              a multiple of the number cache lines in the cache.
@@ -728,6 +713,7 @@ pub struct ScrubAreaIterator<'a, T, U> {
 
 impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> ScrubAreaIterator<'a, T, U> {
     // Create a new ScrubAreaIterator.
+    // cache_desc: Description of the cache
     // scrub_area: Memory over which we Iterate
     //
     // Returns: Ok(ScrubAreaIterator) on success, Err(Error) on failure
@@ -766,14 +752,15 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> iter::Iterator for ScrubAreaIter
             // This, modulo the cache size, is the cache index for the addresses
             // in a pass through that cache index.
             let cd = &self.cache_desc.borrow() as &T;
-            let offset = self.index + self.offset;
+            let i = self.index + self.offset;
             let size = cd.size_in_cachelines(&self.scrub_area);
 
-            if offset < size {
-                let start = self.scrub_area.start as *const U;
-                let res = unsafe {
-                    start.offset(offset as isize)
-                };
+            if i < size {
+                let start = self.scrub_area.start as *mut U;
+                let res = start as usize + (i << cd.cacheline_width());
+                // Increment by the number of cache lines in the cache so that
+                // the next address has the same cache index. In some ways,
+                // this is the real key to all of this code.
                 self.offset += self.cache_desc.borrow().cache_lines();
                 return Some(res as *mut U);
             }
