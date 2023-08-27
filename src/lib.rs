@@ -929,6 +929,7 @@ mod tests {
     use std::cell::{RefCell};
     use std::ptr;
     use std::rc::Rc;
+    use std::slice;
     use std::time::Instant;
 
     use crate::{Addr, AutoScrub, AutoScrubDesc, CacheDesc, Cacheline, Error,
@@ -1006,10 +1007,12 @@ mod tests {
     //      testing
     // TOUCHING_SANDBOX_SIZE - Number of cachelines we actually expect to
     //      touch
+    // TOUCHING_COOKIE - Cookie written to all memory we're scrubbing
     const GUARD_LINES: usize = TOUCHING_CACHE_LINES;
     const TOUCHING_CACHE_NUM_TOUCHED: usize = 3;
     const TOUCHING_SANDBOX_SIZE: usize =
         TOUCHING_CACHE_LINES * TOUCHING_CACHE_NUM_TOUCHED;
+    const TOUCHING_COOKIE: TouchingECCData = 17;
 
     // TouchingECCData - The data size used to compute the ECC for basic tests
     type TouchingECCData = u64;
@@ -1176,6 +1179,7 @@ mod tests {
             read_info.n_reads.as_mut().unwrap()
         }
 
+        // Find a ReadInfo corresponding to a given location in memory
         fn find_read_info<'a>(&'a mut self,
             cacheline_ptr: *const TouchingCacheline) ->
             &'a mut ReadInfo {
@@ -1207,13 +1211,19 @@ mod tests {
 
         fn read_cacheline(&mut self, cacheline_ptr: *const TouchingCacheline) {
             // Do the read
-            let cacheline = unsafe {
-                &*cacheline_ptr
-            };
-            let cacheline_data = &cacheline.data[0];
             let _dummy = unsafe {
-                ptr::read(cacheline_data)
+                ptr::read(&(*cacheline_ptr).data[0]);
             };
+
+            // Now we do something *really* bad--write to a read only section
+            // of memory. But, this is for testing purposes, so sometimes you
+            // just gotta break the law.
+            unsafe {
+                let cacheline_write_ptr =
+                    cacheline_ptr as *mut TouchingCacheline;
+                ptr::write(&mut (*cacheline_write_ptr).data[0],
+                    TOUCHING_COOKIE);
+            }
 
             // Update the read count
             let index = {
@@ -1525,7 +1535,6 @@ mod tests {
 
     // Verify the proper locations were hit
     // memory_scrubber - MemoryScrubber to use
-    // touching_cache_desc - The TouchingCacheDesc to use.
     // n - bytes scrubbed
     //
     // This essentially reimplements the iterator code but in a more straight-
@@ -1592,7 +1601,7 @@ mod tests {
         // location i in n_reads[] will be at least equal to the number of
         // complete scans of the memory area. Then, the remaining number of
         // items in the scan will be one larger.
-        for line in 0..cache_lines {
+        'scan_lines: for line in 0..cache_lines {
             for i in (line..scrub_lines).step_by(cache_lines) {
                 let inc = if verified < n_extra_reads { 1 } else { 0 };
                 let expected: NRead = n_min_reads + inc;
@@ -1600,12 +1609,27 @@ mod tests {
                 assert_eq!(actual, expected as u8);
                 verified += 1;
                 if verified == verified_end {
-                    return;
+                    break 'scan_lines;
                 }
             }
         }
 
         verify_guard(n_reads, GUARD_LINES + TOUCHING_SANDBOX_SIZE);
+
+        // Check and see whether all of the scrubbed memory has the expected
+        // value.
+        let num_cachelines = cache_desc.size_in_cachelines(&scrub_area);
+        let mem = read_info.mem.mem_area.as_ptr() as *const TouchingCacheline;
+        let memory_as_cachelines = unsafe {
+            slice::from_raw_parts(mem, num_cachelines)
+        };
+
+        for memory_as_cacheline in memory_as_cachelines {
+            assert_eq!(memory_as_cacheline.data[0], TOUCHING_COOKIE);
+            for data in &memory_as_cacheline.data[1..] {
+                assert_eq!(*data, 0);
+            }
+        }
     }
 
     // Verify a guard area before the memory area. This should
