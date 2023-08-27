@@ -37,7 +37,7 @@
 // QUICK START
 // ===========
 // 1.   Add the lines:
-//          use libmemscrub_arch::{BaseCacheDesc, BaseCacheline,
+//          use libmemscrub_arch::{CacheDesc, Cacheline,
 //              MemoryScrubber, ScrubArea};
 //
 // 2.   Determine values for and define the following:
@@ -56,7 +56,7 @@
 //
 //              const MY_CACHE_INDEX_WIDTH: usize = 10;
 //
-//      d.  A BaseCacheline structure that uses the above to define what a cache
+//      d.  A Cacheline structure that uses the above to define what a cache
 //          line looks like. This has a very specific memory layout, so it
 //          must be specified as a C structure:
 //
@@ -65,10 +65,10 @@
 //                  data:   [MyECCData; MY_CACHELINE_ITEMS],
 //              }
 //
-//              impl BaseCacheline for MyCacheline {}
+//              impl Cacheline for MyCacheline {}
 //
 //
-// 2.   Define and implement a BaseCacheDesc structure for your cache line. This
+// 2.   Define and implement a CacheDesc structure for your cache line. This
 //      requires implementing the function cache_index_width(), which returns
 //      the cache line width determined above, and read_cacheline(), which
 //      causes the entire cacheline to be read:
@@ -77,7 +77,7 @@
 //              cache_index_width: usize,
 //          }
 //
-//          impl BaseCacheDesc for MyCacheDesc {
+//          impl CacheDesc for MyCacheDesc {
 //              fn cache_index_width(&self) -> usize { self.cache_index_width }
 //              fn read_cacheline(&mut self,
 //                  cacheline_ptr: *const MyCacheline) {
@@ -108,7 +108,7 @@
 // 4.   The simplest thing to do is to use the autoscrub() function. The work
 //      it does can be broken down, see below. Using autoscrub() consists of:
 //
-//      a.  Create a structure implementing the BaseAutoScrubDesc trait. The
+//      a.  Create a structure implementing the AutoScrubDesc trait. The
 //          only thing that needs to be defined is a function that returns
 //          the number of bytes to be scrubbed. If it returns zero, the
 //          autoscrub() function will return:
@@ -117,7 +117,7 @@
 //                  scrub_size: usize,
 //              }
 //
-//              impl BaseAutoScrubDesc for MyAutoScrubDesc {
+//              impl AutoScrubDesc for MyAutoScrubDesc {
 //                  fn next(&mut self) -> usize {
 //                      self.scrub_size
 //                  }
@@ -204,7 +204,7 @@
 //      or u64, and we'll call it ECCData here, though you can use anything
 //      appropriate to your error correction hardware.
 //
-// 2.   Define the structure of a cache line by implementing BaseCacheline for
+// 2.   Define the structure of a cache line by implementing Cacheline for
 //      the particular layout for your processor. We'll call the structure
 //      MyCacheline. It usually the case that cache lines are arrays of ECCData
 //      items, such as:
@@ -224,7 +224,7 @@
 //      (likely), the cache line size is the number of bytes in a single way.
 //
 // 3.   Create a structure that holds definitions of your cache. This is
-//      an implementation of the BaseCacheDesc trait. For example purposes, call
+//      an implementation of the CacheDesc trait. For example purposes, call
 //      this MyCacheDesc. In most cases, the default functions provide
 //      everything you need, so only things you need to define are the
 //      following:
@@ -406,14 +406,13 @@
 // that it can be ignored.
 
 use std::cell::RefCell;
+use std::fmt;
 use std::iter;
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::slice;
 
-// C-language interface
-//
-
-// Structure used to define an area to be scribbed
+// Structure used to define an area to be scrubbed
 // start - lowest address of the area. Must be a multiple of the cache line size
 // end - address of the last byte of the area. Must be one less than a multiple
 //      of the cache line size
@@ -424,16 +423,157 @@ pub struct ScrubArea {
     pub end:                *const u8,
 }
 
-// End of C code, it's all Rust from here on in.
+pub trait Cacheline {
+}
+
+#[derive(Clone)]
+#[repr(C)]
+pub struct CCacheDesc {
+/*
+    me: *mut CCacheDesc,
+*/
+    cacheline_width: usize,
+/*
+    // Return the number of bits required to hold an index into the bytes of
+    // a cache line. So, if you have an eight-byte cache line (unlikely), this
+    // would return 3.
+    c_cacheline_width: extern "C" fn(me: *const CCacheDesc) -> usize,
+*/
+
+    // NOTE: You are unlikely to ever need to implement this
+    // Return the number of bytes in the cache line. A cache line width of 4
+    // bits will have a cache line size of 16 bytes.
+    c_cacheline_size: extern "C" fn(me: *const CCacheDesc) -> usize,
+
+    // Return the number of bits used to index into the cache, i.e. the index
+    // of a cache line in the cache. A cache with 1024 lines will have an
+    // index using 10 bits.
+    c_cache_index_width: extern "C" fn(me: *const CCacheDesc) -> usize,
+
+    // This function is given a pointer to a cache line-aligned address with
+    // as many bytes as are in a cache line. The implementation should do
+    // whatever is necessary to ensure all bytes are read in order to trigger
+    // a fault if any bits have an unexpected value. So long as the number
+    // of bad bits is small enough (ECC-dependent), corrected data should
+    // be written back to that location, preventing the accumulation of so many
+    // bad bits that the correct value cannot be determined.
+    c_read_cacheline: extern "C" fn(me: *mut CCacheDesc,
+        cacheline_ptr: *const CCacheline),
+
+    // Return the size of a ScrubArea in cachelines
+    c_size_in_cachelines: extern "C" fn(me: *const CCacheDesc,
+        scrub_area: &ScrubArea) -> usize,
+
+    // Returns the cache index part of the address
+    c_cache_index: extern "C" fn(me: *const CCacheDesc,
+        p: *const u8) -> usize,
+}
+
+impl CCacheDesc {
+    pub fn new(cacheline_width: usize,
+        c_cacheline_size: extern "C" fn(me: *const CCacheDesc) -> usize,
+        c_cache_index_width: extern "C" fn(me: *const CCacheDesc) -> usize,
+        c_read_cacheline: extern "C" fn(me: *mut CCacheDesc,
+            cacheline_ptr: *const CCacheline),
+        c_size_in_cachelines: extern "C" fn(me: *const CCacheDesc,
+            scrub_area: &ScrubArea) -> usize,
+        c_cache_index: extern "C" fn(me: *const CCacheDesc,
+            p: *const u8) -> usize) -> CCacheDesc {
+        CCacheDesc {
+            cacheline_width: cacheline_width,
+            c_cacheline_size: c_cacheline_size,
+            c_cache_index_width: c_cache_index_width,
+            c_read_cacheline: c_read_cacheline,
+            c_size_in_cachelines: c_size_in_cachelines,
+            c_cache_index: c_cache_index,
+        }
+    }
+}
+
+impl CacheDesc<CCacheline> for CCacheDesc {
+    fn cacheline_width(&self) -> usize {
+        self.cacheline_width
+    }
+
+    fn cacheline_size(&self) -> usize {
+        let self_ptr: *const CCacheDesc = self as *const _;
+        (self.c_cacheline_size)(self_ptr)
+    }
+
+    fn cache_index_width(&self) -> usize {
+        let self_ptr: *const CCacheDesc = self as *const _;
+        (self.c_cache_index_width)(self_ptr)
+    }
+
+    fn read_cacheline(&mut self, cacheline_ptr: *const CCacheline) {
+        let self_ptr: *mut CCacheDesc = self as *mut _;
+        (self.c_read_cacheline)(self_ptr, cacheline_ptr)
+    }
+
+    fn size_in_cachelines(&self, scrub_area: &ScrubArea) -> usize {
+        let self_ptr: *const CCacheDesc = self as *const _;
+        (self.c_size_in_cachelines)(self_ptr, scrub_area)
+    }
+
+    fn cache_index(&self, p: *const u8) -> usize {
+        let self_ptr: *const CCacheDesc = self as *const _;
+        (self.c_cache_index)(self_ptr, p)
+    }
+}
+
+#[repr(C)]
+pub struct CAutoScrubDesc {
+    me: *mut CAutoScrubDesc,
+    c_next: extern "C" fn(me: *mut CAutoScrubDesc) -> usize,
+}
+
+impl AutoScrubDesc for CAutoScrubDesc {
+    fn next(&mut self) -> usize {
+        (self.c_next)(self.me)
+    }
+}
+
+#[repr(C)]
+pub struct AutoScrubResult {
+    is_err:  bool,
+    error:  Error,
+}
+
+#[repr(C)]
+pub struct CCacheline {
+    data: u8,
+}
+
+impl Cacheline for CCacheline {
+}
+
+// This is the C interface to autoscrub.
+//    scrub_areas_ptr: *const ScrubArea, n_scrub_areas: usize,
+//    c_auto_scrub_desc: &'a mut dyn AutoScrubDesc) -> AutoScrubResult {
+#[no_mangle]
+pub extern "C" fn autoscrub(c_cache_desc: &mut CCacheDesc,
+    scrub_areas_ptr: *const ScrubArea, n_scrub_areas: usize,
+    c_auto_scrub_desc: &mut CAutoScrubDesc) -> AutoScrubResult {
+
+    let scrub_areas = unsafe {
+        // It looks like the slice constructed with from_raw_parts is
+        // never freed. This is the behavior we want when we get a pointer
+        // from C/C++.
+        slice::from_raw_parts(scrub_areas_ptr, n_scrub_areas)
+    };
+
+    match AutoScrub::<CCacheDesc, CCacheline>::autoscrub(c_cache_desc,
+        &scrub_areas, c_auto_scrub_desc) {
+        Err(e) => AutoScrubResult { is_err: true, error: e },
+        Ok(_) => AutoScrubResult { is_err: false, error: Error::InternalError },
+    }
+}
 
 // Data type that can hold any address for manipulation as an integer
 type Addr = usize;
 
-pub trait BaseCacheline {
-}
-
 // Describe cache parameters and pull in all elements of the cache line.
-pub trait BaseCacheDesc<T: BaseCacheline> {
+pub trait CacheDesc<T> {
     // NOTE: You are unlikely to ever need to implement this
     // Return the number of bits required to hold an index into the bytes of
     // a cache line. So, if you have an eight-byte cache line (unlikely), this
@@ -489,7 +629,7 @@ pub trait BaseCacheDesc<T: BaseCacheline> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub enum Error {
     InternalError,
@@ -501,36 +641,50 @@ pub enum Error {
     IteratorFailed,
 }
 
-pub trait BaseAutoScrubDesc {
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+pub trait AutoScrubDesc {
     fn next(&mut self) -> usize;
 }
 
-pub struct BaseAutoScrub<'a, T:BaseCacheDesc<U>, U:BaseCacheline> {
+struct AutoScrub<'a, T: CacheDesc<U>, U: Cacheline> {
     scrubber:   MemoryScrubber<'a, T, U>,
-    desc:       &'a mut dyn BaseAutoScrubDesc,
+    desc:       &'a mut dyn AutoScrubDesc,
 }
 
-impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> BaseAutoScrub<'a, T, U> {
-    pub fn autoscrub(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea],
-            desc: &'a mut dyn BaseAutoScrubDesc) ->
-        Result<(), Error> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> AutoScrub<'a, T, U> {
+    fn new(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea],
+        desc: &'a mut dyn AutoScrubDesc) ->
+        Result<AutoScrub<'a, T, U>, Error> {
         let scrubber = match MemoryScrubber::new(cache_desc, scrub_areas) {
             Err(e) => return Err(e),
             Ok(scrubber) => scrubber,
         };
 
-        let mut autoscrub = BaseAutoScrub {
+        Ok(AutoScrub {
             scrubber: scrubber,
             desc: desc,
-        };
+        })
+    }
 
+    fn scrub(&mut self) -> Result<(), Error> {
         loop {
-            let n = autoscrub.desc.next();
+            let n = self.desc.next();
             if n == 0 {
                 return Ok(());
             }
-            autoscrub.scrubber.scrub(n)?;
+            self.scrubber.scrub(n)?;
         }
+    }
+
+    pub fn autoscrub(cache_desc: &'a mut T, scrub_areas: &'a [ScrubArea],
+            desc: &'a mut dyn AutoScrubDesc) -> Result<(), Error> {
+        let mut autoscrub = Self::new(cache_desc, scrub_areas, desc)?;
+        autoscrub.scrub()
     }
 }
 
@@ -539,13 +693,13 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> BaseAutoScrub<'a, T, U> {
 // scrub_areas - ScrubAreas being scrubbed
 // iterator - MemoryScrubberIterator used to walk through the memory being
 //      scrubbed
-pub struct MemoryScrubber<'a, T: BaseCacheDesc<U>, U: BaseCacheline> {
-    cache_desc:     Rc<RefCell<&'a mut T>>, //<'a, BaseCacheline>,
+pub struct MemoryScrubber<'a, T: CacheDesc<U>, U: Cacheline> {
+    cache_desc:     Rc<RefCell<&'a mut T>>, //<'a, Cacheline>,
     scrub_areas:    &'a [ScrubArea],
     iterator:       Option<MemoryScrubberIterator<'a, T, U>>,
 }
 
-impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> MemoryScrubber<'a, T, U> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> MemoryScrubber<'a, T, U> {
 
     // Create a new memory scrubber
     // cache_desc - Description of the cache
@@ -652,7 +806,7 @@ pub struct MemoryScrubberIterator<'a, T, U> {
     index:          usize,
 }
 
-impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> MemoryScrubberIterator<'a, T, U> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> MemoryScrubberIterator<'a, T, U> {
     pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
         scrub_areas: &'a [ScrubArea]) ->
         MemoryScrubberIterator<'a, T, U> {
@@ -666,7 +820,7 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> MemoryScrubberIterator<'a, T, U>
     }
 }
 
-impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> iter::Iterator for
+impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
     MemoryScrubberIterator<'_, T, U> {
     type Item = *mut U;
 
@@ -711,7 +865,7 @@ pub struct ScrubAreaIterator<'a, T, U> {
     _marker:    PhantomData<U>
 }
 
-impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> ScrubAreaIterator<'a, T, U> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> ScrubAreaIterator<'a, T, U> {
     // Create a new ScrubAreaIterator.
     // cache_desc: Description of the cache
     // scrub_area: Memory over which we Iterate
@@ -730,9 +884,9 @@ impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> ScrubAreaIterator<'a, T, U> {
     }
 }
 
-// Return a pointer into a series of BaseCacheline items. To get a byte address
+// Return a pointer into a series of Cacheline items. To get a byte address
 // from the return value of next(), call it ret_val, use:
-impl<'a, T: BaseCacheDesc<U>, U: BaseCacheline> iter::Iterator for ScrubAreaIterator<'a, T, U> {
+impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for ScrubAreaIterator<'a, T, U> {
     type Item = *mut U;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -777,7 +931,7 @@ mod tests {
     use std::rc::Rc;
     use std::time::Instant;
 
-    use crate::{Addr, AutoScrub, AutoScrubDesc, BaseCacheDesc, BaseCacheline, Error,
+    use crate::{Addr, AutoScrub, AutoScrubDesc, CacheDesc, Cacheline, Error,
         MemoryScrubber, ScrubArea};
 
     // Cache characteristics
@@ -803,7 +957,8 @@ mod tests {
             (1 << BASIC_CACHELINE_WIDTH) / std::mem::size_of::<BasicECCData>()],
     }
 
-    impl BaseCacheline for BasicCacheline {}
+    impl Cacheline for BasicCacheline {
+    }
 
     // BasicCacheDesc - Description of the cache for basic tests
     // cache_index_width - Number of bits of the cache index.
@@ -812,7 +967,7 @@ mod tests {
         cache_index_width:        usize,
     }
 
-    impl BaseCacheDesc<BasicCacheline> for BasicCacheDesc {
+    impl CacheDesc<BasicCacheline> for BasicCacheDesc {
         fn cache_index_width(&self) -> usize {
             self.cache_index_width
         }
@@ -868,7 +1023,8 @@ mod tests {
             (1 << TOUCHING_CACHELINE_WIDTH) / TOUCHING_ECC_DATA_SIZE],
     }
 
-    impl BaseCacheline for TouchingCacheline {}
+    impl Cacheline for TouchingCacheline {
+    }
 
     // Description of memory that is read into by the read_cacheline() function.
     // This keeps the actually allocation together with the pointer into that
@@ -1044,7 +1200,7 @@ mod tests {
         }
     }
 
-    impl BaseCacheDesc<TouchingCacheline> for TouchingCacheDesc {
+    impl CacheDesc<TouchingCacheline> for TouchingCacheDesc {
         fn cache_index_width(&self) -> usize {
             self.cache_index_width
         }
@@ -1315,7 +1471,7 @@ mod tests {
             Err(e) => panic!("AutoScrub::new failed: {}", e),
             Ok(autoscrub) => autoscrub,
         };
-        match autoscrub.autoscrub() {
+        match autoscrub.scrub() {
             Err(e) => panic!("autoscrub() failed: {}", e),
             Ok(_) => {},
         };
