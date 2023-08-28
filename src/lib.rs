@@ -514,11 +514,6 @@ impl CacheDesc<CCacheline> for CCacheDesc {
         let self_ptr: *const CCacheDesc = self as *const _;
         (self.c_size_in_cachelines)(self_ptr, scrub_area)
     }
-
-    fn cache_index(&self, p: *const u8) -> usize {
-        let self_ptr: *const CCacheDesc = self as *const _;
-        (self.c_cache_index)(self_ptr, p)
-    }
 }
 
 #[repr(C)]
@@ -619,13 +614,6 @@ pub trait CacheDesc<T> {
         let end_in_cachelines =
             scrub_area.end as usize >> self.cacheline_width();
         (end_in_cachelines - start_in_cachelines) + 1
-    }
-
-    // Returns the cache index part of the address
-    fn cache_index(&self, p: *const u8) -> usize {
-        let width = self.cacheline_width();
-        let mask = (1 << self.cache_index_width()) - 1;
-        (p as Addr >> width) & mask
     }
 }
 
