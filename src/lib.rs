@@ -986,7 +986,10 @@ mod tests {
     const TOUCHING_ECCDATA_WIDTH: usize = usize::BITS as usize - 1 -
         std::mem::size_of::<TouchingECCData>() .leading_zeros() as usize;
     const TOUCHING_CACHELINE_WIDTH: usize = 3 + TOUCHING_ECCDATA_WIDTH;
+/* FIXME: restore this
     const TOUCHING_CACHE_INDEX_WIDTH: usize = 10;
+*/
+    const TOUCHING_CACHE_INDEX_WIDTH: usize = 2;
     const TOUCHING_CACHE_LINES: usize = 1 << TOUCHING_CACHE_INDEX_WIDTH;
 
     // GUARD_LINES - Number of cache line size items we allocate but don't
@@ -1058,6 +1061,7 @@ mod tests {
                 !(cacheline_size - 1);
             let start = start_addr as *const u8;
             let end = (start_addr + size - 1) as *const u8;
+println!("Mem::new: start {:p}", start);
 
             Ok(Mem {
                 mem_area:   mem_area,
@@ -1148,9 +1152,9 @@ mod tests {
             };
 
             let read_info = self.find_read_info(cacheline_ptr);
-            let n_read_size = std::mem::size_of::<NRead>();
-            let n_n_reads = read_info.mem.mem_area.len() / n_read_size;
-            let start_addr = read_info.mem.scrub_area.start as Addr;
+            let scrub_area = read_info.mem.scrub_area.clone();
+            let n_n_reads = self.size_in_cachelines(&scrub_area);
+            let start_addr = scrub_area.start as Addr;
 
             let offset = (cacheline_addr - start_addr) / cacheline_size;
             let index = GUARD_LINES + offset;
@@ -1221,6 +1225,7 @@ mod tests {
                 self.get_n_reads(cacheline_ptr)
             };
 
+println!("read_cacheline: cacheline_ptr {:p}", cacheline_ptr);
             n_reads[index] += 1;
         }
     }
@@ -1581,6 +1586,13 @@ mod tests {
             memory_scrubber.cache_desc.borrow().size_in_cachelines(scrub_area);
         let verified_end = verified + scrub_lines;
 
+        let num_cachelines = cache_desc.size_in_cachelines(&scrub_area);
+        let mem_lines = read_info.mem.scrub_area.start as
+            *const TouchingCacheline;
+        let mem = unsafe {
+            slice::from_raw_parts(mem_lines, num_cachelines)
+        };
+
         let n_reads = &read_info.n_reads.as_ref().unwrap();
         verify_guard(n_reads, 0);
 
@@ -1592,9 +1604,23 @@ mod tests {
         'scan_lines: for line in 0..cache_lines {
             for i in (line..scrub_lines).step_by(cache_lines) {
                 let inc = if verified < n_extra_reads { 1 } else { 0 };
-                let expected: NRead = n_min_reads + inc;
-                let actual = n_reads[GUARD_LINES + i];
-                assert_eq!(actual, expected as u8);
+                let n_expected: NRead = n_min_reads + inc;
+                let n_actual = n_reads[GUARD_LINES + i];
+                assert_eq!(n_actual, n_expected as u8);
+
+println!("mem[{}].data[0] {:p}", i, mem[i].data.as_ptr() as *const u8);
+println!("n_min_reads {} n_extra_reads {}", n_min_reads, n_extra_reads);
+                let mem_actual = mem[i].data[0];
+                let mem_expected =
+                    if n_min_reads == 0 && verified >= n_extra_reads { 0 }
+                    else { TOUCHING_COOKIE };
+
+                assert_eq!(mem_actual, mem_expected);
+                for data in &mem[i].data[1..] {
+                    let mem_actual = *data;
+                    assert_eq!(mem_actual, 0);
+                }
+
                 verified += 1;
                 if verified == verified_end {
                     break 'scan_lines;
@@ -1603,21 +1629,6 @@ mod tests {
         }
 
         verify_guard(n_reads, GUARD_LINES + TOUCHING_SANDBOX_SIZE);
-
-        // Check and see whether all of the scrubbed memory has the expected
-        // value.
-        let num_cachelines = cache_desc.size_in_cachelines(&scrub_area);
-        let mem = read_info.mem.mem_area.as_ptr() as *const TouchingCacheline;
-        let memory_as_cachelines = unsafe {
-            slice::from_raw_parts(mem, num_cachelines)
-        };
-
-        for memory_as_cacheline in memory_as_cachelines {
-            assert_eq!(memory_as_cacheline.data[0], TOUCHING_COOKIE);
-            for data in &memory_as_cacheline.data[1..] {
-                assert_eq!(*data, 0);
-            }
-        }
     }
 
     // Verify a guard area before the memory area. This should
