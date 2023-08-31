@@ -638,6 +638,7 @@ pub enum Error {
     UnalignedSize,
     NoScrubAreas,
     EmptyScrubArea,
+    ZeroSize,
     IteratorFailed,
 }
 
@@ -800,7 +801,7 @@ pub struct ScrubLinesIterator<'a, T, U> {
 impl<'a, T: CacheDesc<U>, U: Cacheline> ScrubLinesIterator<'a, T, U> {
     pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
         scrub_areas: &'a [ScrubArea]) -> ScrubLinesIterator<'a, T, U> {
-println!("ScrubLinesIterator::new: create new CacheIndexIterator");
+//println!("ScrubLinesIterator::new: create new CacheIndexIterator");
         let cur_index = 0;
         let iterator = CacheIndexIterator::<T, U>::new(cache_desc.clone(),
             scrub_areas, cur_index);
@@ -824,14 +825,14 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
 
             match next {
                 None => {
-println!("ScrubLinesIterator:next: create new CacheIndexIterator cur_index {}", self.cur_index);
+//println!("ScrubLinesIterator:next: create new CacheIndexIterator cur_index {}", self.cur_index);
                     self.iterator = CacheIndexIterator::<T, U>
                         ::new(self.cache_desc.clone(),
                         &self.scrub_areas, self.cur_index);
                 },
                 Some((cur_index, p)) => {
                     self.cur_index = cur_index;
-println!("ScrubLinesIterator:next: returning Some({}, {:p})", cur_index, p);
+//println!("ScrubLinesIterator:next: returning Some({}, {:p})", cur_index, p);
                     return Some(p);
                 },
             }
@@ -859,7 +860,7 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> CacheIndexIterator<'a, T, U> {
     pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
         scrub_areas: &'a [ScrubArea], cur_index: usize) ->
         CacheIndexIterator<'a, T, U> {
-println!("CacheIndexIterator::new: create new ScrubAreasIterator");
+//println!("CacheIndexIterator::new: create new ScrubAreasIterator");
         let iterator = ScrubAreasIterator::<T, U>::new(cache_desc.clone(),
             &scrub_areas, cur_index);
 
@@ -881,19 +882,19 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
             let next = self.iterator.next();
 
             if let Some(p) = next {
-println!("CacheIndexIterator:next: returning Some({}, {:p})", self.cur_index, p);
+//println!("CacheIndexIterator:next: returning Some({}, {:p})", self.cur_index, p);
                 return Some((self.cur_index, p));
             }
 
             let cache_index_width = self.cache_desc.borrow()
                 .cache_index_width();
             if self.cur_index == 1 << cache_index_width {
-println!("CacheIndexIterator:next: returning None");
+//println!("CacheIndexIterator:next: returning None");
                 return None;
             }
 
             self.cur_index += 1;
-println!("CacheIndexIterator::next: create new ScrubAreasIterator");
+//println!("CacheIndexIterator::next: create new ScrubAreasIterator");
             self.iterator = ScrubAreasIterator::<T, U>
                 ::new(self.cache_desc.clone(),
                 &self.scrub_areas, self.cur_index);
@@ -918,7 +919,7 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> ScrubAreasIterator<'a, T, U> {
     pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
         scrub_areas: &'a [ScrubArea], cur_index: usize) ->
         ScrubAreasIterator<'a, T, U> {
-println!("ScrubAreasIterator::new: create new ScrubAreaIterator");
+//println!("ScrubAreasIterator::new: create new ScrubAreaIterator");
         let iterator =
             ScrubAreaIterator::<T, U>::new(cache_desc.clone(), &scrub_areas[0],
             cur_index);
@@ -938,28 +939,30 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
 
     // Loop through all scrub areas
     fn next(&mut self) -> Option<Self::Item> {
+        assert_ne!(self.scrub_areas.len(), 0);
+
+        // Assuming not zero length
         loop {
             let next = self.iterator.next();
 
             if let Some(p) = next {
-println!("ScrubAreasIterator::next: return Some({:p})", p);
+//println!("ScrubAreasIterator::next: return Some({:p})", p);
                 return Some(p);
             }
 
+            self.i += 1;
             if self.i == self.scrub_areas.len() {
-println!("ScrubAreasIterator::next: return None");
+//println!("ScrubAreasIterator::next: return None(2)");
                 return None;
             }
 
-            self.i += 1;
-println!("");
-println!("ScrubAreasIterator::next: create new ScrubAreaIterator");
+//println!("ScrubAreasIterator::next: i {}, cur_index {} create ScrubAreaIterator", self.i, self.cur_index);
+//println!("   ScrubAreasIterator::next:: ScrubArea [{:p}-{:p}]", self.scrub_areas[self.i].start, self.scrub_areas[self.i].end);
+//println!("   cacheline_size {}", self.cache_desc.borrow().cacheline_size());
+
             self.iterator =
                 ScrubAreaIterator::<T, U>::new(self.cache_desc.clone(),
                 &self.scrub_areas[self.i], self.cur_index);
-
-println!("calling ScrubAreaIterator::next()");
-println!("ScrubAreasIterator::next: {{start {:p} end {:p}}} cur_index {}", self.scrub_areas[self.i].start, self.scrub_areas[self.i].end, self.cur_index);
         }
     }
 }
@@ -1009,6 +1012,7 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
     type Item = *const U;
 
     fn next(&mut self) -> Option<Self::Item> {
+//println!("ScrubAreaIterator::next: entered");
         let cache_lines = self.cache_desc.borrow().cache_lines();
         let start_index = self.cache_desc.borrow()
             .cache_index(self.scrub_area.start);
@@ -1018,24 +1022,34 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
         // to that the value of i times the number of cachelines it takes to
         // get to the next address with the same cache index. So, for all values
         // of i, we get the addresses with the same cache index.
-        let delta = if self.cur_index > start_index
-            { self.cur_index - start_index }
-            else { (self.cur_index + cache_lines) - start_index };
+//println!("self.cur_index {:x} start_index {:x}", self.cur_index, start_index);
+        let delta = if self.cur_index >= start_index
+            {
+//println!("cur_index {} after or at start index {}", self.cur_index, start_index);
+                self.cur_index - start_index
+            } else {
+//println!("cur_index {} before start index {}", self.cur_index, start_index);
+                (self.cur_index + cache_lines) - start_index 
+            };
 
         let cur_offset = delta + self.i * cache_lines;
+//println!("delta {:x} self.i {:x} cur_offset {:x}", delta, self.i, cur_offset);
 
         // If the offset less than than the size of the scrub_areas, we have
         // data
         let size_in_cachelines = self.cache_desc.borrow()
             .size_in_cachelines(&self.scrub_area);
+//println!("cur_offset {:x} size_in_cachelines {:x}", cur_offset, size_in_cachelines);
         if cur_offset < size_in_cachelines {
             self.i += 1;
             let cacheline_width = self.cache_desc.borrow().cacheline_width();
             let p = self.scrub_area.start as usize +
                 (cur_offset << cacheline_width);
+//println!("ScrubAreaIterator::next: return {:p}", p as *const U);
             return Some(p as *const U)
         }
 
+//println!("ScrubAreaIterator::next: return None");
         None
     }
 }
@@ -1049,7 +1063,8 @@ mod tests {
     use std::time::Instant;
 
     use crate::{Addr, AutoScrub, AutoScrubDesc, CacheDesc, Cacheline, Error,
-        MemoryScrubber, ScrubArea, ScrubAreaIterator, ScrubLinesIterator};
+        MemoryScrubber, ScrubArea, ScrubAreaIterator, ScrubAreasIterator,
+        ScrubLinesIterator};
 
     // Cache characteristics
     // BASIC_CACHELINE_WIDTH - number of bits required to index a byte in a
@@ -1128,25 +1143,33 @@ mod tests {
         // opaque but the p element in the Mem has at least size bytes
         // starting at a cache line aligned section of memory. The size element
         // is the size used to call this function.
-        fn new<T>(size: usize) ->
-            Result<Mem, Error> {
+        fn new<T>(size: usize) -> Result<Mem, Error> {
             let cacheline_size = std::mem::size_of::<T>();
+            Self::new_aligned(size, cacheline_size)
+        }
 
-            if (size & (cacheline_size - 1)) != 0 {
+        fn new_aligned(size: usize, alignment_size: usize) ->
+            Result<Mem, Error>{
+            if size == 0 {
+                return Err(Error::ZeroSize);
+            }
+
+            let log2_alignment_size = usize::BITS as usize - 1 -
+                alignment_size.leading_zeros() as usize;
+            if (1usize << log2_alignment_size) != alignment_size {
                 return Err(Error::UnalignedSize);
             }
 
             // Allocate memory, which includes a cache size-sided area before
             // what we are touching. These areas should not be touched by
             // scrubbing.
-            let mem_area: Vec<u8> = vec![0; cacheline_size + size];
+            let mem_area: Vec<u8> = vec![0; alignment_size + size];
 
             // Now find the first cache line aligned pointer
-            let start_addr = (mem_area.as_ptr() as Addr + cacheline_size - 1) &
-                !(cacheline_size - 1);
+            let start_addr = (mem_area.as_ptr() as Addr + alignment_size - 1) &
+                !(alignment_size - 1);
             let start = start_addr as *const u8;
             let end = (start_addr + size - 1) as *const u8;
-println!("Mem::new: start {:p}", start);
 
             Ok(Mem {
                 mem_area:   mem_area,
@@ -1281,7 +1304,7 @@ println!("Mem::new: start {:p}", start);
             let start_addr = scrub_area.start as Addr;
 
             let index = (cacheline_addr - start_addr) / cacheline_size;
-println!("index {} n_n_reads {}", index, n_n_reads);
+//println!("index {} n_n_reads {}", index, n_n_reads);
             assert!(index < n_n_reads);
             index
         }
@@ -1346,7 +1369,7 @@ println!("index {} n_n_reads {}", index, n_n_reads);
                 self.get_n_reads(cacheline_ptr)
             };
 
-println!("read_cacheline: i {} cacheline_ptr {:p}", GUARD_LINES + index, cacheline_ptr);
+//println!("read_cacheline: i {} cacheline_ptr {:p}", GUARD_LINES + index, cacheline_ptr);
             n_reads[GUARD_LINES + index] += 1;
         }
     }
@@ -1639,12 +1662,103 @@ println!("read_cacheline: i {} cacheline_ptr {:p}", GUARD_LINES + index, cacheli
             self.cache_index_width
         }
 
-        fn read_cacheline(&mut self, _cacheline_ptr: *const IterCacheline) {
+        fn read_cacheline(&mut self, cacheline_ptr: *const IterCacheline) {
+            // Assure that IterCacheline::data is read
+            unsafe {
+                assert_eq!((*cacheline_ptr).data[0], (*cacheline_ptr).data[0]);
+            }
+        }
+    }
+
+
+    #[test]
+    fn test_iter_scrub_areas() {
+        struct TestData<'a> {
+            cur_index:  usize,
+            expected:   &'a [usize],
+        }
+
+        let mut iter_cache_desc = IterCacheDesc::new(ITER_CACHE_INDEX_WIDTH);
+        let cache_desc = Rc::new(RefCell::new(&mut iter_cache_desc));
+
+        let cl_width = cache_desc.borrow().cacheline_width();
+        let cl_size = 1 << cl_width;
+        let ci_width = cache_desc.borrow().cache_index_width();
+        let c_size = cl_size * (1 << ci_width);
+
+        let base1 = 0x10 * c_size + 0 * cl_size;
+        let s1 = (base1) as *const u8;
+        let e1 = (base1 + 1 * cl_size) as *const u8;
+        let base2 = 0x20 * c_size + 1 * cl_size;
+        let s2 = (base2) as *const u8;
+        let e2 = (base2 + 1 * cl_size) as *const u8;
+        let base3 = 0x30 * c_size + 2 * cl_size;
+        let s3 = (base3) as *const u8;
+        let e3 = (base3 + 4 * c_size + 3 * cl_size) as *const u8;
+        let base4 = 0x40 * c_size + 3 * cl_size;
+        let s4 = (base4) as *const u8;
+        let e4 = (base4 + 2 * cl_size) as *const u8;
+        let base5 = 0x50 * c_size + 3 * cl_size;
+        let s5 = (base5) as *const u8;
+        let e5 = (base5 + 2 * cl_size + 2 * cl_size) as *const u8;
+
+        let phys_scrub_areas = [
+            ScrubArea::new(s1, e1),
+            ScrubArea::new(s2, e2),
+            ScrubArea::new(s3, e3),
+            ScrubArea::new(s4, e4),
+            ScrubArea::new(s5, e5),
+        ];
+
+        let expected1 = [base1 + 0 * c_size];
+        let expected2 = [base1 + 0 * c_size + 1 * cl_size,
+            base2 + 0 * c_size + 0 * cl_size];
+        let expected3 = [base2 + 0 * c_size + 1 * cl_size, base3 + 0 * c_size,
+            base3 + 1 * c_size, base3 + 2 * c_size, base3 + 3 * c_size];
+
+        print_scrub_areas(*cache_desc.borrow(), &phys_scrub_areas);
+        let test_data:  [TestData; 3] = [
+            TestData {cur_index: 0, expected: &expected1},
+            TestData {cur_index: 1, expected: &expected2},
+            TestData {cur_index: 2, expected: &expected3},
+        ];
+
+        for test_datum in test_data {
+//println!("--- {}", cnt);
+            let iterator = ScrubAreasIterator::new(cache_desc.clone(),
+                &phys_scrub_areas, test_datum.cur_index);
+//println!("test_iter_scrub_areas: cur_index {}", test_datum.cur_index);
+/*
+print!("expected [");
+let mut sep = "";
+for e in test_datum.expected {
+    print!("{}{:x}", sep, e);
+    sep = ", ";
+}
+println!("]");
+*/
+
+            // Scan the entire set of ScrubAreas
+            let mut count = 0;
+            for (actual, expected) in
+                iterator.into_iter().zip(test_datum.expected.iter()) {
+                let expected_p = *expected as *const IterCacheline;
+//println!("test_iter_scrub_areas: count {} actual {:p} expected {:p}", count + 1, actual, expected_p);
+                assert_eq!(actual, expected_p);
+                count += 1;
+            };
+//println!("test_iter_scrub_areas: final count {}", count);
+            assert_eq!(count, test_datum.expected.len());
         }
     }
 
     #[test]
     fn test_iter_scrub_area() {
+        struct TestData<'a> {
+            cur_index:  usize,
+            scrub_area: &'a ScrubArea,
+            expected:   &'a[usize],
+        }
         let mut iter_cache_desc = IterCacheDesc::new(ITER_CACHE_INDEX_WIDTH);
         let cache_desc = Rc::new(RefCell::new(&mut iter_cache_desc));
 
@@ -1654,54 +1768,122 @@ println!("read_cacheline: i {} cacheline_ptr {:p}", GUARD_LINES + index, cacheli
         let c_size = cl_size * (1 << ci_width);
 
         // These all start two cache lines above a cache-sized boundary
-        let s1 = (c_size + 1 * cl_size) as * const u8;
-        let e1 = (c_size + 1 * cl_size + 3 * c_size) as *const u8;
-        let phys_scrub_area = ScrubArea::new(s1, e1);
+        let delta1 = 1 * cl_size;
+        let mut phys_mem1 =
+            match Mem::new_aligned(delta1 + 2 * cl_size, c_size) {
+            Err(e) => panic!("Failed to allocate phys_mem1: {}", e),
+            Ok(phys_mem) => phys_mem,
+        };
+        phys_mem1.scrub_area.start = (phys_mem1.scrub_area.start as usize +
+            delta1) as *const u8;
 
-        print_scrub_area(*cache_desc.borrow(), &phys_scrub_area);
-        let cur_indices = [0, 1, 2];
-        let base1 = 2 * c_size + 0 * cl_size;
-        let base2 = 2 * c_size + 1 * cl_size;
-        let base3 = 1 * c_size + 2 * cl_size;
-        let expected_arrs = [
-            [base1 + 0 * c_size, base1 + 1 * c_size, base1 + 2 * c_size],
-            [base2 + 0 * c_size, base2 + 1 * c_size, base2 + 2 * c_size],
-            [base3 + 0 * c_size, base3 + 1 * c_size, base3 + 2 * c_size],
+        let delta2 = 1 * cl_size;
+        let mut phys_mem2 =
+            match Mem::new_aligned(delta2 + 3 * c_size, c_size) {
+            Err(e) => panic!("Failed to allocate phys_mem2: {}", e),
+            Ok(phys_mem) => phys_mem,
+        };
+        phys_mem2.scrub_area.start = (phys_mem2.scrub_area.start as usize +
+              delta2) as *const u8;
+
+        let delta3 = 1 * cl_size;
+        let mut phys_mem3 =
+            match Mem::new_aligned(delta3 + 1 * cl_size, c_size) {
+            Err(e) => panic!("Failed to allocate phys_mem3: {}", e),
+            Ok(phys_mem) => phys_mem,
+        };
+        phys_mem3.scrub_area.start = (phys_mem3.scrub_area.start as usize +
+              delta3) as *const u8;
+
+        let base1 = phys_mem1.scrub_area.start as usize;
+        let base2 = phys_mem2.scrub_area.start as usize;
+        let base3 = phys_mem3.scrub_area.start as usize;
+//println!();
+//println!("base2 {:x} (c_size - delta2) {}", base2, c_size - delta2);
+
+        let expected1 = [];
+        let expected2 = [base1];
+        let expected3 = [base1 + cl_size];
+        let expected4 = [base2 + (c_size - delta2) + 0 * c_size + 0 * cl_size,
+            base2 + (c_size - delta2) + 1 * c_size + 0 * cl_size];
+        let expected5 = [base2 + 0 * c_size + 0 * cl_size,
+            base2 + 1 * c_size + 0 * cl_size,
+            base2 + 2 * c_size + 0 * cl_size];
+        let expected6 = [base2 + 0 * c_size + 1 * cl_size,
+            base2 + 1 * c_size + 1 * cl_size,
+            base2 + 2 * c_size + 1 * cl_size];
+        let expected7 = [base3 + 0 * cl_size];
+
+        let test_data: [TestData; 7] = [
+            TestData { cur_index: 0, scrub_area: &phys_mem1.scrub_area.clone(),
+                expected: &expected1},
+            TestData { cur_index: 1, scrub_area: &phys_mem1.scrub_area.clone(),
+                expected: &expected2},
+            TestData { cur_index: 2, scrub_area: &phys_mem1.scrub_area.clone(),
+                expected: &expected3},
+            TestData { cur_index: 0, scrub_area: &phys_mem2.scrub_area.clone(),
+                expected: &expected4},
+            TestData { cur_index: 1, scrub_area: &phys_mem2.scrub_area.clone(),
+                expected: &expected5},
+            TestData { cur_index: 2, scrub_area: &phys_mem2.scrub_area.clone(),
+                expected: &expected6},
+            TestData { cur_index: 1, scrub_area: &phys_mem3.scrub_area.clone(),
+                expected: &expected7},
         ];
 
-        for (cur_index, expected_arr) in
-            cur_indices.iter().zip(expected_arrs.iter()) {
-            let iterator = ScrubAreaIterator::new(cache_desc.clone(),
-                &phys_scrub_area, *cur_index);
+
+        for test_datum in test_data {
+//println!();
+            print_scrub_areas(*cache_desc.borrow(),
+                &[test_datum.scrub_area.clone()]);
+            let sax = &test_datum.scrub_area;
+            let cd = cache_desc.clone();
+            let cur_index = test_datum.cur_index;
+//println!("cur_index {}", cur_index);
+/*
+print!("start {:p} expected [", sax.start);
+let mut sep = "";
+for e in test_datum.expected {
+    print!("{}{:x}", sep, e);
+    sep = ", ";
+}
+println!("]");
+*/
+            let iterator = ScrubAreaIterator::new(cd, sax, cur_index);
 
             // Scan the entire set of ScrubAreas
             let mut count = 0;
             for (actual, expected) in
-                iterator.into_iter().zip(expected_arr.iter()) {
+                iterator.into_iter().zip(test_datum.expected.iter()) {
                 let expected_p = *expected as *const IterCacheline;
-println!("actual {:p} expected {:p}", actual, expected_p);
+//println!("actual {:p} expected {:p}", actual, expected_p);
                 assert_eq!(actual, expected_p);
                 count += 1;
             };
-            assert_eq!(count, expected_arr.len());
+            assert_eq!(count, test_datum.expected.len());
         }
     }
 
-    fn print_scrub_area(cache_desc: &IterCacheDesc,
-        phys_scrub_area: &ScrubArea) {
+    fn print_scrub_areas(_cache_desc: &IterCacheDesc,
+        _phys_scrub_areas: &[ScrubArea]) {
+/*
         let mut total_bytes: usize = 0;
         let cacheline_width = cache_desc.cacheline_width();
 
         // Print the tuples in the vector
         println!("Physical addresses:");
-        let delta_cachelines =
-            cache_desc.size_in_cachelines(&phys_scrub_area);
-        let delta_bytes = delta_cachelines << cacheline_width;
-        total_bytes += delta_bytes;
+        for phys_scrub_area in phys_scrub_areas {
+            let delta_cachelines =
+                cache_desc.size_in_cachelines(&phys_scrub_area);
+            let delta_bytes = delta_cachelines << cacheline_width;
+            total_bytes += delta_bytes;
+            println!("{:p}-{:p}: {} ({} cache lines)", phys_scrub_area.start,
+                phys_scrub_area.end, delta_bytes, delta_cachelines);
+        }
 
-        println!("{:p}-{:p}: {} ({} cache lines)", phys_scrub_area.start,
-            phys_scrub_area.end, delta_bytes, delta_cachelines);
-        println!("total size {}", total_bytes);
+        println!("total size {} bytes ({} cache lines)", total_bytes,
+            total_bytes >> cacheline_width);
+*/
     }
 
     #[test] #[ignore]
@@ -1782,6 +1964,12 @@ println!("actual {:p} expected {:p}", actual, expected_p);
         };
 
         verify_scrub(&memory_scrubber, n);
+
+        // Ensure that mem_area is used
+        for read_info in &memory_scrubber.cache_desc.borrow().read_infos {
+            let mem_area = &read_info.mem.mem_area;
+            assert_ne!(mem_area[0], mem_area[0]);
+        }
     }
 
     // Set up a TouchingCacheDesc and ScrubAreas
@@ -1831,15 +2019,13 @@ println!("actual {:p} expected {:p}", actual, expected_p);
 
         let mut verified = 0;
 
-let mut i = 0;
         for read_info in &memory_scrubber.cache_desc.borrow().read_infos {
-println!(">>>>> verify_read_info for {}", i);
+//println!(">>>>> verify_read_info for {}", i);
             verify_read_info(&memory_scrubber, &read_info,
                 n_min_reads, n_extra_reads, verified);
             verified += memory_scrubber.cache_desc.borrow()
                     .size_in_cachelines(&read_info.mem.scrub_area);
-println!("<<<<<");
-i += 1;
+//println!("<<<<<");
         }
     }
 
@@ -1870,7 +2056,7 @@ i += 1;
         };
 
         let n_reads = &read_info.n_reads.as_ref().unwrap();
-println!("GUARD_LINES {} n_reads.len() {}", GUARD_LINES, n_reads.len());
+//println!("GUARD_LINES {} n_reads.len() {}", GUARD_LINES, n_reads.len());
         verify_guard(n_reads, 0);
 
         // Now verify the contents of the memory to see whether they were
@@ -1885,8 +2071,8 @@ println!("GUARD_LINES {} n_reads.len() {}", GUARD_LINES, n_reads.len());
                 let n_actual = n_reads[GUARD_LINES + i];
                 assert_eq!(n_actual, n_expected as u8);
 
-println!("mem[{}].data[0] {:p}", i, mem[i].data.as_ptr() as *const u8);
-println!("n_min_reads {} n_extra_reads {}", n_min_reads, n_extra_reads);
+//println!("mem[{}].data[0] {:p}", i, mem[i].data.as_ptr() as *const u8);
+//println!("n_min_reads {} n_extra_reads {}", n_min_reads, n_extra_reads);
                 let mem_actual = mem[i].data[0];
                 let mem_expected =
                     if n_min_reads == 0 && verified >= n_extra_reads { 0 }
@@ -1898,10 +2084,10 @@ println!("n_min_reads {} n_extra_reads {}", n_min_reads, n_extra_reads);
                     assert_eq!(mem_actual, 0);
                 }
 
-println!("verified {} verified_end {}", verified, verified_end);
+//println!("verified {} verified_end {}", verified, verified_end);
                 verified += 1;
                 if verified == verified_end {
-println!("break");
+//println!("break");
                     break 'scan_lines;
                 }
             }
@@ -1917,7 +2103,7 @@ println!("break");
     // offset - Offset in n_reads to check
     fn verify_guard(n_reads: &Vec<NRead>, offset: usize) {
 
-println!("GUARD_LINES {} offset {} TOUCHING_SANDBOX_SIZE {}", GUARD_LINES, offset, TOUCHING_SANDBOX_SIZE);
+//println!("GUARD_LINES {} offset {} TOUCHING_SANDBOX_SIZE {}", GUARD_LINES, offset, TOUCHING_SANDBOX_SIZE);
         for i in 0..GUARD_LINES {
             let actual = n_reads[offset + i];
 if actual != 0 {
