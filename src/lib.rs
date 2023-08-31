@@ -821,16 +821,13 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
         loop {
             let next = self.iterator.next();
 
-            match next {
-                None => {
-                    self.iterator = CacheIndexIterator::<T, U>
-                        ::new(self.cache_desc.clone(),
-                        &self.scrub_areas);
-                },
-                Some(p) => {
-                    return Some(p);
-                },
+            if next.is_some() {
+                return next;
             }
+
+            self.iterator =
+                CacheIndexIterator::<T, U>::new(self.cache_desc.clone(),
+                &self.scrub_areas);
         }
     }
 }
