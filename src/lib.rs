@@ -797,21 +797,18 @@ pub struct ScrubLinesIterator<'a, T, U> {
     cache_desc:     Rc<RefCell<&'a mut T>>,
     scrub_areas:    &'a [ScrubArea],
     iterator:       CacheIndexIterator<'a, T, U>,
-    cur_index:      usize,
 }
 
 impl<'a, T: CacheDesc<U>, U: Cacheline> ScrubLinesIterator<'a, T, U> {
     pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
         scrub_areas: &'a [ScrubArea]) -> ScrubLinesIterator<'a, T, U> {
-        let cur_index = 0;
         let iterator = CacheIndexIterator::<T, U>::new(cache_desc.clone(),
-            scrub_areas, cur_index);
+            scrub_areas);
 
         ScrubLinesIterator {
             cache_desc:     cache_desc.clone(),
             scrub_areas:    scrub_areas,
             iterator:       iterator,
-            cur_index:      cur_index,
         }
     }
 }
@@ -826,17 +823,11 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
 
             match next {
                 None => {
-                    self.cur_index += 1;
-                    let cache_lines = self.cache_desc.borrow().cache_lines();
-                    if self.cur_index == cache_lines {
-                        self.cur_index = 0;
-                    }
                     self.iterator = CacheIndexIterator::<T, U>
                         ::new(self.cache_desc.clone(),
-                        &self.scrub_areas, self.cur_index);
+                        &self.scrub_areas);
                 },
-                Some((cur_index, p)) => {
-                    self.cur_index = cur_index;
+                Some(p) => {
                     return Some(p);
                 },
             }
@@ -862,8 +853,8 @@ pub struct CacheIndexIterator<'a, T, U> {
 
 impl<'a, T: CacheDesc<U>, U: Cacheline> CacheIndexIterator<'a, T, U> {
     pub fn new(cache_desc: Rc<RefCell<&'a mut T>>,
-        scrub_areas: &'a [ScrubArea], cur_index: usize) ->
-        CacheIndexIterator<'a, T, U> {
+        scrub_areas: &'a [ScrubArea]) -> CacheIndexIterator<'a, T, U> {
+        let cur_index = 0;
         let iterator = ScrubAreasIterator::<T, U>::new(cache_desc.clone(),
             &scrub_areas, cur_index);
 
@@ -878,24 +869,26 @@ impl<'a, T: CacheDesc<U>, U: Cacheline> CacheIndexIterator<'a, T, U> {
 
 impl<'a, T: CacheDesc<U>, U: Cacheline> iter::Iterator for
     CacheIndexIterator<'a, T, U> {
-    type Item = (usize, *const U);
+    type Item = *const U;
 
     fn next(&mut self) -> Option<Self::Item> {
         let cache_index_width = self.cache_desc.borrow().cache_index_width();
-        let cache_size_in_cachelines = 1 << cache_index_width;
+        let cache_lines = 1 << cache_index_width;
 
         loop {
+println!("CacheIndexIterator::next: cur_index {} cache_lines {}", self.cur_index, cache_lines);
             let next = self.iterator.next();
 
             if let Some(p) = next {
-                return Some((self.cur_index, p));
-            }
-
-            if self.cur_index == cache_size_in_cachelines {
-                return None;
+                return Some(p);
             }
 
             self.cur_index += 1;
+ 
+            if self.cur_index == cache_lines {
+                return None;
+            }
+
             self.iterator = ScrubAreasIterator::<T, U>
                 ::new(self.cache_desc.clone(),
                 &self.scrub_areas, self.cur_index);
@@ -1785,15 +1778,14 @@ mod tests {
             base6 + 0 * cl_size,
         ];
 
-        let mut iterator = CacheIndexIterator::new(cache_desc, &scrub_areas, 0);
+        let mut iterator = CacheIndexIterator::new(cache_desc, &scrub_areas);
 
         for expected in expecteds {
             let expected_p = expected as *const IterCacheline;
-            let next = match iterator.next() {
+            let actual = match iterator.next() {
                 None => panic!("Ran out of scrub areas too soon"),
-                Some(next) => next,
+                Some(actual) => actual,
             };
-            let actual = next.1;
             assert_eq!(actual, expected_p);
         }
         let next = iterator.next();
