@@ -1358,25 +1358,24 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct Tester<CL, DI>
+    struct Tester<'a, CL, DI>
     where
         CL: TestCachelineBase<DI>
     {
-//        cache_desc: &'a TestCacheDesc<CL, DI>,
-//        read_infos: &'a [ReadInfo],
-        cache_desc: TestCacheDesc<CL, DI>,
+        cache_desc: &'a TestCacheDesc<CL, DI>,
+// FIXME: can this be a reference to a slice?
         read_infos: Vec<ReadInfo>,
         _marker1:   PhantomData<CL>,
         _marker2:   PhantomData<DI>,
     }
 
     impl<'a, CL, D>
-    Tester<CL, D>
+    Tester<'a, CL, D>
     where
         CL: TestCachelineBase<D>,
     {
         pub fn new(cache_desc: &'a TestCacheDesc<CL, D>,
-            sizes: &'a [usize]) -> Tester<CL, D> {
+            sizes: &'a [usize]) -> Tester<'a, CL, D> {
             let mut read_infos = Vec::<ReadInfo>::new();
 
             // Allocate memory and associated data structures
@@ -1392,8 +1391,7 @@ mod tests {
                 read_infos.push(ReadInfo::new(n_reads_size, mem));
             }
             Tester {
-// FIXME: this should be a reference to the cache_desc passed in
-                cache_desc: cache_desc.clone(),
+                cache_desc: &cache_desc,
                 read_infos: read_infos,
                 _marker1:   PhantomData,
                 _marker2:   PhantomData,
@@ -1412,9 +1410,7 @@ mod tests {
         fn increment_n_reads(&mut self, cacheline_ptr: *const CL) {
             // Update the read count
             let index = {
-// FIXME: should be able to remove reference because self.cache_desc should be
-// a reference and it shouldn't be a clone
-                self.read_index(&self.cache_desc.clone(), cacheline_ptr)
+                self.read_index(self.cache_desc, cacheline_ptr)
             };
             let n_reads = {
                 self.get_n_reads(cacheline_ptr)
@@ -1474,15 +1470,14 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     }
 
     impl<'a, CL, D>
-    Clone for Tester<CL, D>
+    Clone for Tester<'a, CL, D>
     where
         CL: TestCachelineBase<D>,
     {
-        fn clone(&self) -> Tester<CL, D> {
-            let cache_desc = self.cache_desc.clone();
+        fn clone(&self) -> Tester<'a, CL, D> {
             let read_infos = self.read_infos.clone();
             Tester {
-                cache_desc: cache_desc,
+                cache_desc: &self.cache_desc,
                 read_infos: read_infos,
                 _marker1:   PhantomData,
                 _marker2:   PhantomData,
