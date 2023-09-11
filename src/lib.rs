@@ -1,4 +1,4 @@
- // FIXME: replace panic!() will something else
+// FIXME: replace panic!() will something else
 // FIXME: Convert Vec<ScrubArea> to [ScrubArea]
 // FIXME: Maintain cur_index in MemoryScrubber. Necessary?
 // FIXME: Remove #[ignore]
@@ -534,7 +534,7 @@ pub trait CacheDescBase {
 // Describe cache parameters and pull in all elements of the cache line, using
 // a definition of the cache line. This enhances the basic CacheDescBase trait
 // by taking a Cacheline generic and using its size
-pub trait CacheDesc<'a, CL: Cacheline<'a, D>, D>: CacheDescBase {
+pub trait CacheDesc<'a, CL: Cacheline<'a, D> + ?Sized, D>: CacheDescBase {
     // NOTE: You are unlikely to ever need to implement this
     fn cacheline_width(&self) -> usize where Self: Sized {
         let cacheline_size = std::mem::size_of::<D>();
@@ -666,7 +666,7 @@ pub struct CAutoScrubResult {
 
 // Autoscrub function interface for C
 //    scrub_areas_ptr: *const MemArea, n_scrub_areas: usize,
-//    c_auto_scrub_desc: &'a mut dyn AutoScrubDesc) -> AutoScrubResult {
+//    c_auto_scrub_desc: &'a mut dyn AutoScrubDesc) -> AutoScrubResult
 #[no_mangle] // Can't use generics if using #[no_mangle]
 pub extern "C" fn autoscrub<'a, D>(c_cache_desc: &'a mut CCacheDesc,
     scrub_areas_ptr: *const MemArea, n_scrub_areas: usize,
@@ -790,7 +790,14 @@ pub trait MemoryScrubberBase<'a, CD: CacheDescBase, CL: CachelineBase<'a>> {
 // iterator - MemoryScrubberIterator used to walk through the memory being
 //      scrubbed
 // cur_index:   Current cache line index
-pub struct MemoryScrubber<'a, CD: CacheDesc<'a, CL, D>, CL: Cacheline<'a, D>, D> {
+pub struct MemoryScrubber<'a, CD, CL: ?Sized, D>
+/*
+where
+    CD: CacheDesc<'a, CL, D>,
+    CL: Cacheline<'a, D> + ?Sized,
+    D,
+*/
+{
     cache_desc:     &'a CD,
     iterator:       ScrubLinesIterator<'a, CD, CL, D>,
     // FIXME: Remove when possible. Right now, the compiler doesn't appear
@@ -799,8 +806,9 @@ pub struct MemoryScrubber<'a, CD: CacheDesc<'a, CL, D>, CL: Cacheline<'a, D>, D>
     _marker:    PhantomData<D>,
 }
 
-impl<'a, CD: CacheDesc<'a, CL, D>, CL: 'a + Cacheline<'a, D> + CachelineBase<'a>, D> MemoryScrubber<'a, CD, CL, D> {
-
+impl<'a, CD: CacheDesc<'a, CL, D>, CL: 'a + Cacheline<'a, D> + CachelineBase<'a>, D>
+MemoryScrubber<'a, CD, CL, D>
+{
     // Create a new memory scrubber
     // cache_desc_in - Description of the cache
     // start - Virtual address of memory being scrubbed
@@ -883,7 +891,7 @@ impl<'a, CD: CacheDesc<'a, CL, D>, CL: 'a + Cacheline<'a, D> + CachelineBase<'a>
 
 // Walks through cache line-sized items. Never reaches an end, that is,
 // next() never returns None
-pub struct ScrubLinesIterator<'a, CD, CL, D> {
+pub struct ScrubLinesIterator<'a, CD, CL: ?Sized, D> {
     cache_desc:     &'a CD,
     scrub_areas:    &'a [MemArea],
     iterator:       CacheIndexIterator<'a, CD, CL, D>,
@@ -936,7 +944,7 @@ impl<'a, CD: CacheDesc<'a, CL, D>, CL: Cacheline<'a, D>, D> iter::Iterator for
 // scrub_areas: List of memory areas to be scrubbed
 // iterator:    An iterator for a scrubbing a single memory area
 // cur_index:   The index of the cache line we are scrubbing
-pub struct CacheIndexIterator<'a, CD, CL, D> {
+pub struct CacheIndexIterator<'a, CD, CL: ?Sized, D> {
     cache_desc:     &'a CD,
     scrub_areas:    &'a [MemArea],
     iterator:       MemAreasIterator<'a, CD, CL, D>,
@@ -996,7 +1004,7 @@ impl<'a, CD: CacheDesc<'a, CL, D>, CL: Cacheline<'a, D>, D> iter::Iterator for
 // scrub_areas: List of memory areas to be scrubbed
 // iterator:    An iterator for a scrubbing a single memory area
 // i:           The index into the current MemArea
-pub struct MemAreasIterator<'a, CD, CL, D> {
+pub struct MemAreasIterator<'a, CD, CL: ?Sized, D> {
 
     cache_desc:     &'a CD,
     scrub_areas:    &'a [MemArea],
@@ -1068,7 +1076,7 @@ impl<'a, CD: CacheDesc<'a, CL, D>, CL: Cacheline<'a, D>, D> iter::Iterator for
 // i:           Number of cache line-sized items we've scanned in this
 //              MemArea
 // cur_index:   Cache index we are scrubbing
-pub struct MemAreaIterator<'a, CD, CL, D> {
+pub struct MemAreaIterator<'a, CD, CL: ?Sized, D> {
     cache_desc: &'a CD,
     scrub_area: &'a MemArea,
     i:          usize,
@@ -1224,18 +1232,24 @@ mod tests {
     }
 
     impl<D: Num, const N: usize>
+    TestCacheDataIndexed<D, N> {
+        fn new() -> Self {
+            unimplemented!();
+        }
+    }
+
+    impl<D: Num, const N: usize>
     TestCacheDataIndexedBase<D, N> for TestCacheDataIndexed<D, N> {
     }
 
-//    impl<D: Num, const N: usize> TestCacheDataIndexed<D, N> {
-    impl<D: Num + std::marker::Copy, const N: usize> TestCacheDataIndexed<D, N> {
 /*
+    impl<D: Num + std::marker::Copy, const N: usize>
+    TestCacheDataIndexed<D, N> {
         fn new() -> TestCacheDataIndexed::<D, N> {
             TestCacheDataIndexed::<D, N> {
                 data:   [D; N],
             }
         }
-*/
 
         // Return a reference to the ith element of the indexed data part
         // of the memory to which the cache line is mapped
@@ -1250,6 +1264,7 @@ mod tests {
             };
         }
     }
+*/
 
 /*
     // FIXME: Should I be using CachelineData and making these all structs?
@@ -1267,7 +1282,7 @@ mod tests {
     //      scrub
     // read_infos:          Array of ReadInfo items>
     #[derive(Debug)]
-    struct TestCacheDesc<CL, DI: ?Sized> {
+    struct TestCacheDesc<CL: ?Sized, DI: ?Sized> {
         cache_index_width:  usize,
         // FIXME: Remove when possible. Right now, the compiler doesn't appear
         // to know that U is actually used when it's in CacheDesc<CL>. So, this
@@ -1535,50 +1550,113 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     }
 */
     // FIXME: can these be combined?
-/*
     lazy_static! {
-        static ref BASIC_CACHE_DATA: TestCacheDataIndexed::<u32, 8> = {
+        static ref BASIC_CACHE_DATA:
+            TestCacheDataIndexed::<u32, 8> = {
             TestCacheDataIndexed::<u32, 8>::new()
-        };
-    }
-
-    lazy_static! {
-        static ref BASIC_CACHELINE: TestCacheline::<BASIC_CACHE_DATA> = {
-            TestCacheline::<BASIC_CACHE_DATA>::new()
         };
     }
 
     lazy_static! {
         // Cache descriptor to pass to the memory scrubbing functions.
         static ref BASIC_CACHE_DESC:
-            TestCacheDesc::<BASIC_CACHELINE, BASIC_CACHE_DATA> = {
-            TestCacheDesc::<BASIC_CACHELINE, BASIC_CACHE_DATA>
-                ::new(&[128])
+            TestCacheDesc::<&'static dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>,
+            TestCacheDataIndexed<u32, 8>> = {
+            TestCacheDesc::<&'static dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>,
+            TestCacheDataIndexed<u32, 8>>::new(&[123])
         };
     }
-*/
+
+// FIXME: move this
+    impl TestCachelineBase<TestCacheDataIndexed<u32, 8>>
+    for &'static (dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>> + 'static) {
+        fn read_cacheline(&self,
+            cacheline_ptr: *const TestCacheDataIndexed<u32, 8>) {
+            unimplemented!();
+        }
+        fn write_cacheline(&self,
+            cacheline_ptr: *mut TestCacheDataIndexed<u32, 8>) {
+            unimplemented!();
+        }
+        fn verify_cacheline(&self,
+            cacheline_ptr: *const TestCacheDataIndexed<u32, 8>) {
+            unimplemented!();
+        }
+    }
+    unsafe impl Sync for MemArea {
+    }
+    unsafe impl<'a, CD, CL: ?Sized, D> Sync for MemAreaIterator<'a, CD, CL, D> {
+    }
 /*
-    lazy_static! {
-        static ref BASIC_CACHE_DATA: TestCacheDataIndexed::<u32, 8> = {
-            TestCacheDataIndexed::<u32, 8>::new()
-        };
+    unsafe impl Sync for dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>> {
     }
 */
 
     lazy_static! {
-        static ref BasicCacheline:
-            TestCacheline::<dyn TestCacheDataIndexedBase<u32, 8>> = {
-            TestCacheline::<dyn TestCacheDataIndexedBase<u32, 8>>::new()
+        static ref BASIC_MEMORY_SCRUBBER:
+            MemoryScrubber::<'static, BASIC_CACHE_DESC,
+            &'static dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>,
+            TestCacheDataIndexed<u32, 8>> = {
+            MemoryScrubber::<BASIC_CACHE_DESC,
+            &'static dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>,
+            TestCacheDataIndexed<u32, 8>>::new(&BASIC_CACHE_DESC, &[MemArea{start: 0 as *const u8, end: 0 as *const u8}]).expect("Unable to create MemoryScrubber")
         };
     }
 
-    lazy_static! {
-        // Cache descriptor to pass to the memory scrubbing functions.
-        static ref BASIC_CACHE_DESC:
-            TestCacheDesc::<BasicCacheline, dyn TestCacheDataIndexedBase<u32, 8>> = {
-            TestCacheDesc::<BasicCacheline, dyn TestCacheDataIndexedBase<u32, 8>>
-                ::new(&[128])
-        };
+/*
+    impl &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
+    {
+        fn new(mem_areas: &[usize]) -> Self {
+            unimplemented!();
+        }
+    }
+*/
+    impl<'a> CacheDesc<'a, &'a dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>, TestCacheDataIndexed<u32, 8>>
+    for BASIC_CACHE_DESC
+    {}
+
+    impl<'a>CacheDescBase
+    for BASIC_CACHE_DESC
+    {
+        fn read_cacheline(&self,
+            cacheline_ptr: *const dyn CachelineBase) {
+            unimplemented!();
+        }
+        fn cacheline_width(&self) -> usize {
+            unimplemented!();
+        }
+        fn cache_index_width(&self) -> usize {
+            unimplemented!();
+        }
+    }
+
+    impl<'a> Cacheline<'a, TestCacheDataIndexed<u32, 8>>
+    for &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
+    {}
+
+    impl<'a> CachelineBase<'a>
+    for &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
+    {}
+
+    impl<'a, CL: Cacheline<'a, D> + ?Sized, D> dyn CacheDesc<'a, CL, D> {
+    }
+
+/*
+// FIXME: move up?
+    impl TestCachelineBase<BASIC_CACHE_DATA>
+    for BASIC_CACHELINE {
+        fn read_cacheline(&self,
+            cacheline_ptr: *const BASIC_CACHE_DATA) {
+            unimplemented!();
+        }
+        fn write_cacheline(&self,
+            cacheline_ptr: *mut BASIC_CACHE_DATA) {
+            unimplemented!();
+        }
+        fn verify_cacheline(&self,
+            cacheline_ptr: *const BASIC_CACHE_DATA) {
+            unimplemented!();
+        }
     }
 
     impl TestCacheline<dyn TestCacheDataIndexedBase<u32, 8>> {
@@ -1588,6 +1666,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             }
         }
     }
+*/
 /*
         fn read_cacheline(&self, cacheline_ptr: *const DI) {
             unimplemented!();
@@ -1600,27 +1679,19 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         }
 */
 
-    impl TestCachelineBase<dyn TestCacheDataIndexedBase<u32, 8>> for BasicCacheline {
-        fn read_cacheline(&self, cacheline_ptr: *const dyn TestCacheDataIndexedBase<u32, 8>) {
-            unimplemented!();
-        }
-        fn write_cacheline(&self, cacheline_ptr: *mut dyn TestCacheDataIndexedBase<u32, 8>) {
-            unimplemented!();
-        }
-        fn verify_cacheline(&self, cacheline_ptr: *const dyn TestCacheDataIndexedBase<u32, 8>) {
-            unimplemented!();
-        }
-    }
-
     // FIXME: is this needed?
-    impl TestCachelineBase<dyn TestCacheDataIndexedBase<u32, 8>> for dyn TestCacheDataIndexedBase<u32, 8> {
-        fn read_cacheline(&self, cacheline_ptr: *const dyn TestCacheDataIndexedBase<u32, 8>) {
+    impl TestCachelineBase<dyn TestCacheDataIndexedBase<u32, 8>>
+    for dyn TestCacheDataIndexedBase<u32, 8> {
+        fn read_cacheline(&self,
+            cacheline_ptr: *const dyn TestCacheDataIndexedBase<u32, 8>) {
             unimplemented!();
         }
-        fn write_cacheline(&self, cacheline_ptr: *mut dyn TestCacheDataIndexedBase<u32, 8>) {
+        fn write_cacheline(&self,
+            cacheline_ptr: *mut dyn TestCacheDataIndexedBase<u32, 8>) {
             unimplemented!();
         }
-        fn verify_cacheline(&self, cacheline_ptr: *const dyn TestCacheDataIndexedBase<u32, 8>) {
+        fn verify_cacheline(&self,
+            cacheline_ptr: *const dyn TestCacheDataIndexedBase<u32, 8>) {
             unimplemented!();
         }
     }
@@ -1751,15 +1822,20 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
 */
     const TEST_COOKIE: usize = 17;
 
-/*
 
     // Verify that an error is returned if the starting address is not
     // aligned on a cache line boundary
+/*
     #[test] #[ignore]
     fn test_unaligned_start() {
-        let basic_cache_desc = &mut BASIC_CACHE_DESC.clone();
-        let mut mem =
-            match Mem::new::<BasicCacheline>(BASIC_MEM_SIZE) {
+/*
+        let mut mem = match Mem::new::<BASIC_CACHELINE>(BASIC_MEM_SIZE) {
+            Err(e) => panic!("Memory allocation error: {}", e),
+            Ok(mem) => mem,
+        };
+*/
+        let mut mem = match Mem::new::<TestCachelineBase<TestCacheDataIndexed<u32, 8>>
+>(BASIC_MEM_SIZE) {
             Err(e) => panic!("Memory allocation error: {}", e),
             Ok(mem) => mem,
         };
@@ -1769,14 +1845,18 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
 
         let mut scrub_areas = Vec::<MemArea>::new();
         scrub_areas.push(mem.scrub_area);
-        let memory_scrubber =
-            MemoryScrubber::<BasicCacheDesc,
-            BasicCacheline>::new(basic_cache_desc, &scrub_areas);
+        let memory_scrubber = BASIC_MEMORY_SCRUBBER.clone();
+/*
+            MemoryScrubber::<BASIC_CACHE_DESC,
+            BASIC_CACHELINE,
+            TestCacheDataIndexed<u32, 8>>::new(&scrub_areas);
+*/
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
             Error::UnalignedStart);
     }
 
+/*
     // Verify that an error is returned if the ending address is not
     // aligned on a cache line boundary
     #[test] #[ignore]
@@ -1801,6 +1881,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         assert_eq!(memory_scrubber.err().unwrap(),
             Error::UnalignedEnd);
     }
+*/
 
     // Verify that an error is returned if the size is zero.
     #[test] #[ignore]
