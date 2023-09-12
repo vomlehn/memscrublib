@@ -1520,38 +1520,6 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     // BasicCacheline - the data type of a cache line
     type BasicECCData = u64;
 
-/*
-    #[repr(C)]
-    struct BasicCacheline {
-        data:   [BasicECCData;
-            (1 << BASIC_CACHELINE_WIDTH) / std::mem::size_of::<BasicECCData>()],
-    }
-
-    impl<'a, D> Cacheline<'a, D> for BasicCacheline {
-    }
-
-    impl<'a, CL: TestCachelineBase<'a, D>, D: TestCacheData<D> + CachelineData + Index<usize>>
-        CacheDesc<'a, CL, D>
-        for BasicCacheDesc<'a, CL, D> {
-        fn cacheline_width(&self) -> usize {
-            unimplemented!();
-        }
-    }
-
-    impl<'a, CL: TestCachelineBase<'a, D>, D: TestCacheData<D> + CachelineData + Index<usize>>
-        CacheDescBase for BasicCacheDesc<'a, CL, D> {
-        fn cache_index_width(&self) -> usize {
-            self.cache_index_width
-        }
-        fn cacheline_width(&self) -> usize {
-            unimplemented!();
-        }
-        fn read_cacheline<'b>(&self,
-            cacheline_ptr: *const dyn CachelineBase<'b>) {
-            unimplemented!();
-        }
-    }
-*/
     // FIXME: can these be combined?
     lazy_static! {
         static ref BASIC_CACHE_DATA:
@@ -1631,59 +1599,6 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     impl<'a, D: Num, const N: usize> CachelineBase<'a>
     for &dyn TestCachelineBase<TestCacheDataIndexed<D, N>>
     {}
-    
-/*
-    impl<'a, D: Num, const N: usize> &dyn TestCachelineBase<TestCacheDataIndexed<D, N>>
-    for dyn CachelineBase<'a>
-    {}
-*/
-
-
-/*
-            MemoryScrubber::<'static, BASIC_CACHE_DESC,
-            &'static dyn TestCachelineBase<TestCacheDataIndexed<D, N>>,
-            TestCacheDataIndexed<D, N>> {
-            MemoryScrubber::<BASIC_CACHE_DESC,
-            &'static dyn TestCachelineBase<TestCacheDataIndexed<D, N>>,
-            TestCacheDataIndexed<D, N>>
-            ::new(&BASIC_CACHE_DESC, mem_areas).expect("Unable to create MemoryScrubber")
-*/
-
-/*
-    lazy_static! {
-        static ref XXX: Result<TestMemoryScrubber<'a, u32, 8>, Error> = {
-            TestMemoryScrubber::<u32, 8>
-                ::new(&[MemArea{start: 0 as *const u8, end: 0 as *const u8}])
-        };
-    }
-*/
-        
-/*
-    lazy_static! {
-        static ref BASIC_MEMORY_SCRUBBER:
-            MemoryScrubber::<'static, BASIC_CACHE_DESC,
-            &'static dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>,
-            TestCacheDataIndexed<u32, 8>> = {
-            MemoryScrubber::<BASIC_CACHE_DESC,
-            &'static dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>,
-            TestCacheDataIndexed<u32, 8>>::new(&BASIC_CACHE_DESC, &[MemArea{start: 0 as *const u8, end: 0 as *const u8}]).expect("Unable to create MemoryScrubber")
-        };
-    }
-*/
-
-/*
-    impl &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
-    {
-        fn new(mem_areas: &[usize]) -> Self {
-            unimplemented!();
-        }
-    }
-*/
-/*
-    impl<'a> CacheDesc<'a, &'a dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>, TestCacheDataIndexed<u32, 8>>
-    for BASIC_CACHE_DESC
-    {}
-*/
 
     impl<'a>CacheDescBase
     for BASIC_CACHE_DESC
@@ -1699,57 +1614,6 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             unimplemented!();
         }
     }
-
-/*
-    impl<'a> Cacheline<'a, TestCacheDataIndexed<u32, 8>>
-    for &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
-    {}
-
-    impl<'a> CachelineBase<'a>
-    for &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
-    {}
-
-    impl<'a, CL: Cacheline<'a, D> + ?Sized, D> dyn CacheDesc<'a, CL, D> {
-    }
-*/
-
-/*
-// FIXME: move up?
-    impl TestCachelineBase<BASIC_CACHE_DATA>
-    for BASIC_CACHELINE {
-        fn read_cacheline(&self,
-            cacheline_ptr: *const BASIC_CACHE_DATA) {
-            unimplemented!();
-        }
-        fn write_cacheline(&self,
-            cacheline_ptr: *mut BASIC_CACHE_DATA) {
-            unimplemented!();
-        }
-        fn verify_cacheline(&self,
-            cacheline_ptr: *const BASIC_CACHE_DATA) {
-            unimplemented!();
-        }
-    }
-
-    impl TestCacheline<dyn TestCacheDataIndexedBase<u32, 8>> {
-        fn new() -> TestCacheline<dyn TestCacheDataIndexedBase<u32, 8>> {
-            TestCacheline::<dyn TestCacheDataIndexedBase<u32, 8>> {
-                _marker1: PhantomData,
-            }
-        }
-    }
-*/
-/*
-        fn read_cacheline(&self, cacheline_ptr: *const DI) {
-            unimplemented!();
-        }
-        fn write_cacheline(&self, cacheline_ptr: *mut DI) {
-            unimplemented!();
-        }
-        fn verify_cacheline(&self, cacheline_ptr: *const DI) {
-            unimplemented!();
-        }
-*/
 
     // FIXME: is this needed?
     impl TestCachelineBase<dyn TestCacheDataIndexedBase<u32, 8>>
@@ -1767,20 +1631,6 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             unimplemented!();
         }
     }
-
-/*
-    impl TestCachelineBase<BASIC_CACHE_DATA> for BASIC_CACHELINE {
-        fn read_cacheline(&self, cacheline_ptr: *const BASIC_CACHE_DATA) {
-            unimplemented!();
-        }
-        fn write_cacheline(&self, cacheline_ptr: *mut BASIC_CACHE_DATA) {
-            unimplemented!();
-        }
-        fn verify_cacheline(&self, cacheline_ptr: *const BASIC_CACHE_DATA) {
-            unimplemented!();
-        }
-    }
-*/
 
     // Description of memory that is read into by the read_cacheline() function.
     // This keeps the actually allocation together with the pointer into that
