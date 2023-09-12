@@ -1298,7 +1298,7 @@ mod tests {
         // Set up a new TestCacheDesc
         // sizes: array of sizes of memory areas
         fn new(sizes: &[usize]) -> Self {
-            let mut test_cache_desc = Self {
+            let test_cache_desc = Self {
                 cache_index_width:  std::mem::size_of::<CL>(),
                 _marker1:            PhantomData,
                 _marker2:            PhantomData,
@@ -1310,6 +1310,9 @@ mod tests {
 */
 
             test_cache_desc
+        }
+        fn cacheline_width(&self) -> usize {
+            std::mem::size_of::<CL>()
         }
     }
 
@@ -1587,11 +1590,75 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     }
     unsafe impl<'a, CD, CL: ?Sized, D> Sync for MemAreaIterator<'a, CD, CL, D> {
     }
-/*
-    unsafe impl Sync for dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>> {
+
+    struct TestMemoryScrubber<'a, D: Num + 'static, const N: usize> {
+        scrubber:   MemoryScrubber::<'a, BASIC_CACHE_DESC,
+                    &'a (dyn TestCachelineBase<TestCacheDataIndexed<D, N>> + 'a),
+                    TestCacheDataIndexed<D, N>>,
+        _marker1:   PhantomData<D>,
     }
+
+    impl<'a, D: Num, const N: usize> TestMemoryScrubber<'a, D, N> {
+        pub fn new(mem_areas: &'a [MemArea]) -> 
+            Result<TestMemoryScrubber<'a, D, N>, Error> {
+            let scrubber = match MemoryScrubber::<BASIC_CACHE_DESC,
+                &'static (dyn TestCachelineBase<TestCacheDataIndexed<D, N>> + 'static),
+                TestCacheDataIndexed<D, N>>
+                ::new(&BASIC_CACHE_DESC, mem_areas) {
+                Err(e) => return Err(e),
+                Ok(scrubber) => scrubber,
+            };
+
+            Ok(TestMemoryScrubber {
+                scrubber:   scrubber,
+                _marker1:   PhantomData,
+            })
+        }
+
+        pub fn scrub(&mut self, n: usize) -> Result<(), Error> {
+            self.scrubber.scrub(n)
+        }
+    }
+
+    impl<'a, D: Num, const N: usize> CacheDesc<'a, &dyn TestCachelineBase<TestCacheDataIndexed<D, N>>, TestCacheDataIndexed<D, N>>
+    for BASIC_CACHE_DESC
+    {}
+
+    impl<'a, D: Num, const N: usize> Cacheline<'a, TestCacheDataIndexed<D, N>>
+    for &dyn TestCachelineBase<TestCacheDataIndexed<D, N>>
+    {}
+
+    impl<'a, D: Num, const N: usize> CachelineBase<'a>
+    for &dyn TestCachelineBase<TestCacheDataIndexed<D, N>>
+    {}
+    
+/*
+    impl<'a, D: Num, const N: usize> &dyn TestCachelineBase<TestCacheDataIndexed<D, N>>
+    for dyn CachelineBase<'a>
+    {}
 */
 
+
+/*
+            MemoryScrubber::<'static, BASIC_CACHE_DESC,
+            &'static dyn TestCachelineBase<TestCacheDataIndexed<D, N>>,
+            TestCacheDataIndexed<D, N>> {
+            MemoryScrubber::<BASIC_CACHE_DESC,
+            &'static dyn TestCachelineBase<TestCacheDataIndexed<D, N>>,
+            TestCacheDataIndexed<D, N>>
+            ::new(&BASIC_CACHE_DESC, mem_areas).expect("Unable to create MemoryScrubber")
+*/
+
+/*
+    lazy_static! {
+        static ref XXX: Result<TestMemoryScrubber<'a, u32, 8>, Error> = {
+            TestMemoryScrubber::<u32, 8>
+                ::new(&[MemArea{start: 0 as *const u8, end: 0 as *const u8}])
+        };
+    }
+*/
+        
+/*
     lazy_static! {
         static ref BASIC_MEMORY_SCRUBBER:
             MemoryScrubber::<'static, BASIC_CACHE_DESC,
@@ -1602,6 +1669,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             TestCacheDataIndexed<u32, 8>>::new(&BASIC_CACHE_DESC, &[MemArea{start: 0 as *const u8, end: 0 as *const u8}]).expect("Unable to create MemoryScrubber")
         };
     }
+*/
 
 /*
     impl &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
@@ -1611,9 +1679,11 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         }
     }
 */
+/*
     impl<'a> CacheDesc<'a, &'a dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>, TestCacheDataIndexed<u32, 8>>
     for BASIC_CACHE_DESC
     {}
+*/
 
     impl<'a>CacheDescBase
     for BASIC_CACHE_DESC
@@ -1630,6 +1700,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         }
     }
 
+/*
     impl<'a> Cacheline<'a, TestCacheDataIndexed<u32, 8>>
     for &dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
     {}
@@ -1640,6 +1711,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
 
     impl<'a, CL: Cacheline<'a, D> + ?Sized, D> dyn CacheDesc<'a, CL, D> {
     }
+*/
 
 /*
 // FIXME: move up?
@@ -1825,16 +1897,13 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
 
     // Verify that an error is returned if the starting address is not
     // aligned on a cache line boundary
-/*
-    #[test] #[ignore]
+    #[test]
     fn test_unaligned_start() {
-/*
-        let mut mem = match Mem::new::<BASIC_CACHELINE>(BASIC_MEM_SIZE) {
+        let mem = match Mem::new::<&dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>>(BASIC_MEM_SIZE) {
             Err(e) => panic!("Memory allocation error: {}", e),
             Ok(mem) => mem,
         };
-*/
-        let mut mem = match Mem::new::<TestCachelineBase<TestCacheDataIndexed<u32, 8>>
+        let mut mem = match Mem::new::<&dyn TestCachelineBase<TestCacheDataIndexed<u32, 8>>
 >(BASIC_MEM_SIZE) {
             Err(e) => panic!("Memory allocation error: {}", e),
             Ok(mem) => mem,
@@ -1845,16 +1914,21 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
 
         let mut scrub_areas = Vec::<MemArea>::new();
         scrub_areas.push(mem.scrub_area);
-        let memory_scrubber = BASIC_MEMORY_SCRUBBER.clone();
-/*
-            MemoryScrubber::<BASIC_CACHE_DESC,
-            BASIC_CACHELINE,
-            TestCacheDataIndexed<u32, 8>>::new(&scrub_areas);
-*/
+        let memory_scrubber = TestMemoryScrubber::<u32, 8>::new(&scrub_areas);
         assert!(memory_scrubber.is_err());
         assert_eq!(memory_scrubber.err().unwrap(),
             Error::UnalignedStart);
+/*
+        let memory_scrubber = BASIC_MEMORY_SCRUBBER.clone();
+            MemoryScrubber::<BASIC_CACHE_DESC,
+            BASIC_CACHELINE,
+            TestCacheDataIndexed<u32, 8>>::new(&scrub_areas);
+        assert!(memory_scrubber.is_err());
+        assert_eq!(memory_scrubber.err().unwrap(),
+            Error::UnalignedStart);
+*/
     }
+/*
 
 /*
     // Verify that an error is returned if the ending address is not
