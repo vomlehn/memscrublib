@@ -545,8 +545,8 @@ where
     fn scrub_areas(&self) -> &[MemArea];
 
     // Report on whether any parameter problems are detected
-    fn check_scrubber_params(cache: &dyn CacheBase<CL>, scrub_areas: &[MemArea]) ->
-        Result<(), Error> where Self: Sized {
+    fn check_scrubber_params(cache: &dyn CacheBase<CL>,
+        scrub_areas: &[MemArea]) -> Result<(), Error> where Self: Sized {
         cache.check_cache_params()?;
 
         if scrub_areas.len() == 0 {
@@ -573,6 +573,7 @@ where
                 return Err(Error::UnalignedEnd);
             }
         }
+
         Ok(())
     }
 
@@ -814,10 +815,11 @@ where
     D: Num + 'a,
 {
     fn check_scrubber_params(cache: &'a CacheClassic<N, W, D, S>,
-        scrub_areas: &'a [MemArea]) -> Result<(), Error> {
+        scrub_areas: &'a [MemArea]) -> Result<(), Error>  where Self: Sized {
         <MemoryScrubberClassic<N, W, D, S> as MemoryScrubberBase
             <CacheClassic<N, W, D, S>, CachelineClassic<D, S>>>
             ::check_scrubber_params(cache, scrub_areas)?;
+        size_to_width::<usize>(W)?;
         Ok(())
     }
 }
@@ -1185,10 +1187,6 @@ where
 {
     fn check_scrubber_params(cache: &CacheClassic<N, W, D, S>,
         scrub_areas: &[MemArea]) -> Result<(), Error> {
-//        MemoryScrubberClassicBase::<'a, dyn CacheClassicBase<N< W, D, S>, dyn CachelineClassicBase<D, S>>
-//        <MemoryScrubberClassic as MemoryScrubberBase>
-//            ::<CacheClassic<N, W, D, S>, CachelineClassic<D, S>>
-//            ::check_scrubber_params(cache, scrub_areas)?;
         <MemoryScrubberClassic<N, W, D, S> as MemoryScrubberClassicBase<N, W, D, S>>
             ::check_scrubber_params(cache, scrub_areas)?;
         Ok(())
@@ -2099,7 +2097,7 @@ where
 // Convert a number of items into the bit width of a value that will
 // hold that number. The number must be a non-zero multiple of two.
 // An error will be returned if that is not true.
-fn size_to_width<T: PrimInt>(size: T) -> Result<usize, Error>
+fn size_to_width<T: PrimInt + std::fmt::Debug>(size: T) -> Result<usize, Error>
 {
     if size == T::zero() {
         return Err(Error::ZeroSize);
@@ -2221,6 +2219,7 @@ mod tests {
     where
         D: Num,
     {
+        cache:      CacheClassic<N, W, D, S>,
         _marker3:   PhantomData<D>,
     }
 
@@ -2231,9 +2230,18 @@ mod tests {
     {
         fn new() -> Self {
             TestCache {
+                cache:      CacheClassic::<N, W, D, S>::new(),
                 _marker3:   PhantomData,
             }
         }
+    }
+
+    impl<'a, const N: usize, const W: usize, D, const S: usize>
+    TestCacheBase<'a, N, W, D, S>
+    for TestCache<N, W, D, S>
+    where
+        D: Num + 'a,
+    {
     }
 
     impl<const N: usize, const W: usize, D, const S: usize>
@@ -2432,6 +2440,87 @@ mod tests {
         }
     }
 
+    impl<const N: usize, const W: usize, D, const S: usize>
+    CacheBase<CachelineClassic<D, S>>
+    for TestCache<N, W, D, S>
+    where
+        D: Num,
+    {
+        fn check_cache_params(&self) -> Result<(), Error> {
+            <TestCacheline::<D, S> as CachelineBase>::check_cacheline_params()?;
+            size_to_width::<usize>(N)?;
+            Ok(())
+        }
+
+        fn cacheline_width(&self) -> usize {
+            unimplemented!();
+            <TestCache::<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
+                ::cacheline_width(self)
+        }
+           
+        fn cacheline_size(&self) -> usize {
+            unimplemented!();
+            <TestCache::<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
+                ::cacheline_width(self)
+        }
+
+        // NOTE: You are unlikely to ever need to implement this
+        // Extract the cache index part of the address
+        fn cache_index_width(&self) -> usize where Self: Sized {
+            raw_size_to_width::<usize>(N)
+        }
+
+        // NOTE: You are unlikely to ever need to implement this
+        // Computes the offset, in cache lines, of the next address at or higher
+        // than the given pointer for an address hitting the given cache index.
+        //
+        // p:       Address to start at
+        // index:   Cache index to search for
+        fn first_offset_for_index(&self, p: Addr, index: usize) -> usize {
+            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
+            let start_index = self_cache_base.cache_index(p);
+            let cache_lines = self_cache_base.cache_lines();
+
+            // Compute the offset from the start of the self.scrub_area to the
+            // next highest address whose cache index is the one we are
+            // currently scrubbing. 
+            let result = if index >= start_index { index - start_index }
+            else { (index + cache_lines) - start_index };
+            result as usize
+        }
+
+        // NOTE: You are unlikely to ever need to implement this
+        // Return the size of a MemArea in cachelines
+        fn size_in_cachelines(&self, scrub_area: &MemArea) -> Addr {
+            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
+            let start_in_cachelines =
+                scrub_area.start >> self_cache_base.cacheline_width();
+            // This will truncate the number of cache lines by one
+            let end_in_cachelines =
+                scrub_area.end >> self_cache_base.cacheline_width();
+            ((end_in_cachelines - start_in_cachelines) + 1) as Addr
+        }
+
+        // NOTE: You are unlikely to ever need to implement this
+        // Extract the cache index part of the address
+        fn cache_index(&self, p: Addr) -> usize {
+            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
+            (p as usize >> self_cache_base.cacheline_width()) &
+                ((1 << self_cache_base.cache_index_width()) - 1)
+        }
+
+        // NOTE: You are unlikely to ever need to implement this
+        // Report the number of cache lines in the cache
+        fn cache_lines(&self) -> usize {
+            N
+        }
+
+        fn read_cacheline(&self, p: Addr) {
+            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
+            self_cache_base.read_cacheline(p);
+        }
+    }
+
     struct TestMemoryScrubber<'a, const N: usize, const W: usize, D,
         const S: usize>
     where
@@ -2445,16 +2534,51 @@ mod tests {
     impl<'a, const N: usize, const W: usize, D, const S: usize>
     TestMemoryScrubber<'a, N, W, D, S>
     where
-        D: Num,
+        D: Num + 'a,
     {
         fn new(scrub_areas: &[MemArea]) ->
             Result<TestMemoryScrubber<N, W, D, S>, Error> {
             let cache = TestCache::<N, W, D, S>::new();
+            <TestMemoryScrubber<'a, N, W, D, S> as
+                TestMemoryScrubberBase<'a, N, W, D, S>>
+                ::check_scrubber_params(&cache.cache, scrub_areas)?;
             Ok(TestMemoryScrubber::<N, W, D, S> {
                 cache:          cache,
                 my_scrub_areas: scrub_areas,
                 _marker1:       PhantomData,
             })
+        }
+    }
+
+    impl<'a, const N: usize, const W: usize, D, const S: usize>
+    TestMemoryScrubberBase<'a, N, W, D, S>
+    for TestMemoryScrubber<'a, N, W, D, S>
+    where
+        D: Num + 'a,
+    {
+    }
+
+    impl<'a, const N: usize, const W: usize, D, const S: usize>
+    MemoryScrubberClassicBase<'a, N, W, D, S>
+    for TestMemoryScrubber<'a, N, W, D, S>
+    where
+        D: Num + 'a,
+    {
+    }
+
+    impl<'a, const N: usize, const W: usize, D, const S: usize>
+    MemoryScrubberBase<'a, CacheClassic<N, W, D, S>,
+        CachelineClassic<D, S>>
+    for TestMemoryScrubber<'a, N, W, D, S>
+    where
+        D: Num + 'a,
+    {
+        fn cache(&self) -> &dyn CacheBase<CachelineClassic<D, S>> {
+            &self.cache
+        }
+
+        fn scrub_areas(&self) -> &[MemArea] {
+            &self.my_scrub_areas
         }
     }
 
@@ -2472,15 +2596,12 @@ mod tests {
         }
     }
 
-/*
-//    trait TestCacheBase<'a, CL, const N: usize, DI, D, const S: usize>:
-    trait TestCacheBase<'a, CL, const N: usize, DI, D, const S: usize>:
-        CacheBase + Test<'a, CL, N, DI, D, S>
+    trait TestCacheBase<'a, const N: usize, const W: usize, D, const S: usize>:
+        CacheClassicBase<N, W, D, S>
     where
-        CL:TestCachelineBase<DI, D, S>,
-        DI: TestCacheDataIndexedBase<D, S>,
-        D: Num,
+        D: Num + 'a,
     {
+/*
         fn cacheline_width(&self) -> usize {
             unimplemented!();
         }
@@ -2490,8 +2611,8 @@ mod tests {
         fn read_cacheline(&self, _cacheline_ptr: *const dyn CachelineBase) {
             unimplemented!();
         }
-    }
 */
+    }
 
 /*
     // TestCacheBase - Description of the cache for basic tests
@@ -2787,68 +2908,18 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     }
 
 trait TestMemoryScrubberBase<'a, const N: usize, const W: usize, D,
-    const S: usize>: MemoryScrubberBase<'a, TestCache<N, W, D, S>,
-        dyn TestCachelineBase<D, S> + 'a>
+    const S: usize>: MemoryScrubberClassicBase<'a, N, W, D, S>
 where
     D: Num + 'a,
 {
+    fn check_scrubber_params(cache: &CacheClassic<N, W, D, S>,
+        scrub_areas: &[MemArea]) -> Result<(), Error> where Self: Sized {
+        <TestMemoryScrubber<N, W, D, S> as
+            MemoryScrubberClassicBase<N, W, D, S>>
+            ::check_scrubber_params(cache, scrub_areas)?;
+            Ok(())
+    }
 }
-
-/*
-        MemoryScrubber::<'a,
-            /* CD */
-                TestCacheBase<'a, 
-                /* CL */
-                    TestCachelineBase<
-                        /* DI */
-                            TestCacheDataIndexedBase<D, S>,
-                        /* DI */
-                        D,
-                        S> + CachelineBase<'a>,
-                /* CL */
-                N,
-                /* DI */
-                    TestCacheDataIndexedBase<D, S>,
-                /* DI */
-                D,
-                S> + CacheBase,
-            /* CL */
-                TestCachelineBase<
-                    /* DI */
-                        TestCacheDataIndexedBase<D, S>,
-                    /* DI */
-                    D,
-                    S> + CachelineBase<'a>>,
-            /* CL */
-*/
-
-/*
-    // Types that use minimal arguments.
-    // Is there a better way to do this? Maybe define types in the
-    // individual traits/structs?
-
-    // Remove this after replqcing with the "X"-less version
-    type XTestCacheDataIndexed<D: Num, const S: usize> =
-        TestCacheDataIndexed<D, S>;
-
-    type XTestCachelineIndexedBase<'a, D: Num, const S: usize> =
-        dyn TestCachelineIndexedBase<TestCacheDataIndexed<D, S>, D, S> + 'a;
-
-    type XTestCacheBase<'a, const N: usize, D: Num, const S: usize> =
-        TestCacheBase<&'a (dyn TestCachelineIndexedBase
-            <TestCacheDataIndexed<D, S>, D, S> + 'a),
-        N,
-        XTestCacheDataIndexed<D, S>, D, S>;
-
-//        TestCacheDataIndexed<D, S>, D, S>;
-
-//pub struct MemoryScrubber<'a, C, CL, CLD>
-    type XTestMemoryScrubber<'a, D: Num, const S: usize> =
-        MemoryScrubber::<'a, 
-            XTestCacheBase<'a, N, D, S>,
-            &'a (dyn TestCachelineBase<TestCacheDataIndexed<D, S>, D, S> + 'a),
-            TestCacheDataIndexed<D, S>>;
-*/
 /*
     struct TestMemoryScrubber<'a, CD, CLD>
     {
@@ -3002,6 +3073,51 @@ where
 */
     const TEST_COOKIE: usize = 17;
 
+
+    // Verify an error is returned if the number of cache lines, the size of
+    // the basic data, or the number of cache line items is not a power of two
+    const GOOD_N: usize = 1024;
+    const GOOD_W: usize = 16;
+    type GoodD = u32;
+    const GOOD_S: usize = 8;
+
+    #[test]
+    fn test_unaligned_parameter_n() {
+        const BAD_N: usize = GOOD_N - 1;
+        test_unaligned_parameter::<BAD_N, GOOD_W, GoodD, GOOD_S>("N");
+    }
+
+    #[test]
+    fn test_unaligned_parameter_w() {
+        const BAD_W: usize = GOOD_W - 1;
+        test_unaligned_parameter::<GOOD_N, BAD_W, GoodD, GOOD_S>("W");
+    }
+
+    #[test]
+    fn test_unaligned_parameter_s() {
+        const BAD_S: usize = GOOD_S - 1;
+        test_unaligned_parameter::<GOOD_N, GOOD_W, GoodD, BAD_S>("S");
+    }
+
+    fn test_unaligned_parameter<const N: usize, const W: usize, D,
+        const S: usize>(param_name: &str)
+    where
+        D:  Num,
+    {
+        let mut mem = Mem::new::<&dyn TestCachelineBase<D, S>>(BASIC_MEM_SIZE)
+            .expect("Unable to alloc memory");
+        let mut scrub_areas = Vec::<MemArea>::new();
+        scrub_areas.push(mem.scrub_area);
+
+        println!("Test params <{}, {}, {}, {}>",  N, W,
+            std::mem::size_of::<D>(), S);
+        let memory_scrubber =
+            TestMemoryScrubber::<N, W, D, S>::new(&scrub_areas);
+        assert!(memory_scrubber.is_err());
+        if let Err(e) = memory_scrubber {
+            assert_eq!(e, Error::UnalignedSize);
+        }
+    }
 
     // Verify that an error is returned if the starting address is not
     // aligned on a cache line boundary
