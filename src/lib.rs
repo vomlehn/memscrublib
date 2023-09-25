@@ -527,20 +527,6 @@ where
     fn cache_lines(&self) -> usize;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 pub trait MemoryScrubberBase<'a, C, CL>
 where
     C: CacheBase<CL> + 'a,
@@ -622,7 +608,35 @@ println!("read cacheline");
         Ok(())
     }
 }
-/*
+
+// FIXME: probably need this in a better place.
+// Convert a number of items into the bit width of a value that will
+// hold that number. The number must be a non-zero multiple of two.
+// An error will be returned if that is not true.
+fn value_to_width<T: PrimInt + std::fmt::Debug>(size: T) -> Result<usize, Error>
+{
+    if size == T::zero() {
+        return Err(Error::ZeroSize);
+    }
+
+    let leading_zeros = size.leading_zeros() as usize;
+    let size_in_bits = mem::size_of::<T>() * 8; // should be T.BITS/size.BITS...
+    let width = size_in_bits - (1 as usize) - leading_zeros;
+    if size != (T::one() << width) {
+        return Err(Error::UnalignedValue);
+    }
+
+    Ok(width)
+}
+
+// Takes the log2(size) to determine the number of bits required to hold
+// the size value. Will return an unpredictable value if the size is not
+// a multiple of two
+fn raw_value_to_width<T: PrimInt>(size: T) -> usize
+{
+    let size_in_bits = mem::size_of::<T>() * 8; // should be T.BITS/size.BITS...
+    size_in_bits - (1 as usize) - (size.leading_zeros() as usize)
+}
 
 // Trait definitions for a "classic" cache
 // =======================================
@@ -653,9 +667,10 @@ println!("read cacheline");
 // S   Number of cache data items per cache line
 // W   Number of ways per cache index
 
-pub trait CachelineClassicBase<D, const S: usize>: CachelineBase
+pub trait CachelineClassicBase<D, const S: usize>: CachelineBase + Sized
 where
     D: Num,
+    Self: Sized
 {
     // Check cache line related parameters.
     //
@@ -685,20 +700,24 @@ where
     }
 }
 
-pub trait CacheClassicBase<const N: usize, const W: usize, D, const S: usize>:
-    CacheBase<dyn CachelineClassicBase<D, S>>
+// FIXME: is there any way to drop the CL parameter and define it in terms
+// of N, W, D, and S?
+pub trait CacheClassicBase<CL, const N: usize, const W: usize, D,
+    const S: usize>: CacheBase<CL> + Sized 
 where
+    CL: CachelineClassicBase<D, S>,
     D: Num,
 {
     // Report on whether any parameter problems are detected
     fn check_cache_params(&self) -> Result<(), Error>
     where
-        Self: CacheClassicBase<N, W, D, S>,
         Self: Sized,
     {
-//        <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
-        <dyn CacheBase<dyn CachelineClassicBase<D, S>>>
-            ::check_cache_params()?;
+        // Check the base trait for this trait
+        CacheBase::<CL>::check_cache_params(self as &dyn CacheBase::<CL>)?;
+        // Check the Cacheline item corresponding to this trait
+        <CL as CachelineClassicBase<D, S>>::check_cacheline_params()?;
+        // And check the parameter at this level
         value_to_width::<usize>(N)?;
         Ok(())
     }
@@ -850,6 +869,7 @@ println!("In MemoryScrubberClassicBase: no problem");
         Ok(())
     }
 }
+*/
 
 // Implementations of "classic" types
 
@@ -863,6 +883,7 @@ where
     data:   [D; S],
 }
 
+/*
 impl<D, const S: usize>
 CachelineClassic<D, S>
 where
@@ -895,7 +916,10 @@ println!("CachelineClassic: cacheline_size entered");
             ::read_cacheline(ptr);
     }
 }
+*/
 
+/*
+/*
 impl<D, const S: usize>
 CachelineClassicBase<D, S>
 for CachelineClassic<D, S>
@@ -2181,35 +2205,6 @@ where
 }
 */
 */
-
-// FIXME: is there a generic way to do this?
-// Convert a number of items into the bit width of a value that will
-// hold that number. The number must be a non-zero multiple of two.
-// An error will be returned if that is not true.
-fn value_to_width<T: PrimInt + std::fmt::Debug>(size: T) -> Result<usize, Error>
-{
-    if size == T::zero() {
-        return Err(Error::ZeroSize);
-    }
-
-    let leading_zeros = size.leading_zeros() as usize;
-    let size_in_bits = mem::size_of::<T>() * 8; // should be T.BITS/size.BITS...
-    let width = size_in_bits - (1 as usize) - leading_zeros;
-    if size != (T::one() << width) {
-        return Err(Error::UnalignedValue);
-    }
-
-    Ok(width)
-}
-
-// Takes the log2(size) to determine the number of bits required to hold
-// the size value. Will return an unpredictable value if the size is not
-// a multiple of two
-fn raw_value_to_width<T: PrimInt>(size: T) -> usize
-{
-    let size_in_bits = mem::size_of::<T>() * 8; // should be T.BITS/size.BITS...
-    size_in_bits - (1 as usize) - (size.leading_zeros() as usize)
-}
 
 /*
 #[cfg(test)]
