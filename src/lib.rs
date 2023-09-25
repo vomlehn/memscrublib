@@ -815,7 +815,6 @@ where
     data:   [D; S],
 }
 
-/*
 impl<D, const S: usize>
 CachelineClassic<D, S>
 where
@@ -828,6 +827,7 @@ where
             ::check_cacheline_params()?;
         Ok(())
     }
+/*
 
     fn cacheline_width() -> usize where Self: Sized {
 println!("CachelineClassic: cacheline_width entered"); 
@@ -847,11 +847,9 @@ println!("CachelineClassic: cacheline_size entered");
         <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
             ::read_cacheline(ptr);
     }
-}
 */
+}
 
-/*
-/*
 impl<D, const S: usize>
 CachelineClassicBase<D, S>
 for CachelineClassic<D, S>
@@ -866,25 +864,31 @@ for CachelineClassic<D, S>
 where
     D: Num,
 {
+/*
     fn check_cacheline_params() -> Result<(), Error> where Self: Sized {
         CachelineClassic::<D, S>::check_cacheline_params()?;
         Ok(())
     }
+*/
 
     fn cacheline_width() -> usize where Self: Sized {
 println!("CachelineClassic:CachelineBase cacheline_width entered"); 
-        CachelineClassic::<D, S>::cacheline_width()
+        <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
+            ::cacheline_width()
     }
 
+/*
     fn cacheline_size() -> usize where Self: Sized {
 println!("CachelineClassic:CachelineBase cacheline_size entered"); 
         CachelineClassic::<D, S>::cacheline_size()
     }
+*/
 
     fn read_cacheline(ptr: Addr)
     where Self: Sized
     {
-        CachelineClassic::<D, S>::read_cacheline(ptr);
+        <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
+            ::read_cacheline(ptr);
     }
 }
 
@@ -895,6 +899,7 @@ where
     _marker1:   PhantomData<D>,
 }
 
+/*
 impl<'a, const N: usize, const W: usize, D, const S: usize>
 CacheClassic<N, W, D, S>
 where
@@ -3998,6 +4003,5 @@ println!("i {}", i);
     }
 */
 }
-*/
 */
 */
