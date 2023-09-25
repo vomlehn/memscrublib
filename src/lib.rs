@@ -527,21 +527,24 @@ where
     fn cache_lines(&self) -> usize;
 }
 
-pub trait MemoryScrubberBase<'a, C, CL>
+pub trait MemoryScrubberBase<C, CL>
 where
-    C: CacheBase<CL> + 'a,
-    CL: CachelineBase + 'a,
+    C: CacheBase<CL>,
+    CL: CachelineBase,
 {
     fn cache(&self) -> &dyn CacheBase<CL>;
     fn scrub_areas(&self) -> &[MemArea];
 
     // Report on whether any parameter problems are detected
-    fn check_scrubber_params(cache: &dyn CacheBase<CL>,
-        scrub_areas: &[MemArea]) -> Result<(), Error> where Self: Sized {
+//    fn check_scrubber_params(cache: &dyn CacheBase<CL>) ->
+    fn check_scrubber_params(&self) -> Result<(), Error>
+    where
+        Self: Sized
+    {
 println!("In MemoryScrubberBase");
-        cache.check_cache_params()?;
+        self.cache().check_cache_params()?;
 
-        if scrub_areas.len() == 0 {
+        if self.scrub_areas().len() == 0 {
             return Err(Error::NoMemAreas);
         }
 
@@ -550,9 +553,12 @@ println!("In MemoryScrubberBase");
 println!("cacheline_size {} cacheline_mask {:x}", cacheline_size, cacheline_mask);
 
         // Check each scrub area for errors
-        for scrub_area in scrub_areas {
-            let start: Addr = unsafe { mem::transmute(scrub_area.start) };
-            let end: Addr = unsafe { mem::transmute(scrub_area.end) };
+        for scrub_area in self.scrub_areas() {
+// FIXME: drop transmute
+//            let start: Addr = unsafe { mem::transmute(scrub_area().start) };
+//            let end: Addr = unsafe { mem::transmute(scrub_area().end) };
+            let start = scrub_area.start;
+            let end = scrub_area.end;
 println!("start {:x} end {:x}", start, end);
 
             if start >= end {
@@ -577,7 +583,7 @@ println!("In MemoryScrubberBase: no problem");
     // area, in which case the scrubbing will start again at the beginning
     // of the memory area, but it seems unlikely that this would be useful.
     // n - Number of bytes to scrub
-    fn scrub(&'a self, n: Addr) -> Result<(), Error>
+    fn scrub(&self, n: Addr) -> Result<(), Error>
     where
         Self: Sized
     {
@@ -703,18 +709,18 @@ where
 // FIXME: is there any way to drop the CL parameter and define it in terms
 // of N, W, D, and S?
 pub trait CacheClassicBase<CL, const N: usize, const W: usize, D,
-    const S: usize>: CacheBase<CL> + Sized 
+    const S: usize>: CacheBase<CL>
 where
     CL: CachelineClassicBase<D, S>,
     D: Num,
 {
     // Report on whether any parameter problems are detected
     fn check_cache_params(&self) -> Result<(), Error>
-    where
-        Self: Sized,
+//    where
+//        Self: Sized,
     {
         // Check the base trait for this trait
-        CacheBase::<CL>::check_cache_params(self as &dyn CacheBase::<CL>)?;
+        CacheBase::check_cache_params(self)?;
         // Check the Cacheline item corresponding to this trait
         <CL as CachelineClassicBase<D, S>>::check_cacheline_params()?;
         // And check the parameter at this level
@@ -765,40 +771,39 @@ println!("CacheClassicBase: cache_index_width: entered");
     fn cache_lines(&self) -> usize {
         1 << CacheClassicBase::cache_index_width(self)
     }
-
 }
 
-/*
-pub trait MemoryScrubberClassicBase<'a, const N: usize, const W: usize, D,
-    const S: usize>:
-    MemoryScrubberBase<'a, CacheClassic<N, W, D, S>, CachelineClassic<D, S>>
+pub trait MemoryScrubberClassicBase<C, CL, const N: usize, const W: usize,
+    D, const S: usize>: MemoryScrubberBase<C, CL> + Sized
 where
-    D: Num + 'a,
+    C: CacheClassicBase<CL, N, W, D, S>,
+    CL: CachelineClassicBase<D, S>,
+    D: Num,
+    Self: Sized
 {
-    fn check_scrubber_params(cache: &'a CacheClassic<N, W, D, S>,
-        scrub_areas: &'a [MemArea]) -> Result<(), Error>  where Self: Sized {
-unimplemented!();
-/*
+    fn cache(&self) -> &dyn CacheClassicBase<CL, N, W, D, S>;
+    fn scrub_areas(&self) -> &[MemArea];
+
+    fn check_scrubber_params(&self) -> Result<(), Error>
+    where
+        Self: Sized,
+        Self: CacheClassicBase<CL, N, W, D, S>,
+    {
 println!("In MemoryScrubberClassicBase");
         // Check the base trait for this trait
-        MemoryScrubberBase
-            ::check_scrubber_params(self as &dyn MemoryScrubberBase)?;
-
-
-
-
-        <MemoryScrubberClassic<N, W, D, S> as MemoryScrubberBase
-            <CacheClassic<N, W, D, S>, CachelineClassic<D, S>>>
-            ::check_scrubber_params(cache, scrub_areas)?;
-println!("In MemoryScrubberClassicBase: no problem");
+        MemoryScrubberBase::check_scrubber_params(self)?;
+        // Check the corresponding cache trait
+        <dyn CacheClassicBase<CL, N, W, D, S>
+            as CacheClassicBase<CL, N, W, D, S>>::check_cache_params(self)?;
+        // Check the number of ways. This may not be necessary or desirable
         value_to_width::<usize>(W)?;
+
         Ok(())
     }
-*/
 }
-*/
 
 // Implementations of "classic" types
+// ==================================
 
 #[repr(C)]
 pub struct CachelineClassic<D, const S: usize>
