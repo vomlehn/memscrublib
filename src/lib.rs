@@ -722,39 +722,13 @@ where
         Ok(())
     }
 
-    // Return the number of bits required to hold a cache index
-    fn cache_index_width(&self) -> usize;
-
-    // Given an address and a cache index, this returns the offset in cache
-    // lines, to the next address for that cache index.
-    fn first_offset_for_index(&self, p: Addr, index: usize) -> usize;
-
-    // Extracts the cache index from an address
-    fn cache_index(&self, p: Addr) -> usize;
-
-    // Returns the number of cache lines in the cache
-    fn cache_lines(&self) -> usize;
-/*
-
-    // Return the number of bits required to hold an index into the bytes of
-    // a cache line. So, if you have an eight-byte cache line (unlikely), this
-    // would return 3. Note that this must return a power of two.
-    //
-    // NOTE: You are unlikely to ever need to implement this
-    fn cacheline_width(&self) -> usize {
-println!("CachelineClassic: cacheline_width entered");
-        <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
-            ::cacheline_width()
-    }
-
-    // Return the number of bytes in the cache line. A cache line width of 4
-    // bits will have a cache line size of 16 bytes.
-    //
-    // NOTE: You are unlikely to ever need to implement this
-    fn cacheline_size(&self) -> usize {
-println!("CachelineClassic: cacheline_size entered");
-        <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
-              ::cacheline_size()
+    // Return the number of bits used to index into the cache, i.e. the index
+    // of a cache line in the cache. A cache with 1024 lines will have an
+    // index using 10 bits.
+    fn cache_index_width(&self) -> usize
+    {
+println!("CacheClassicBase: cache_index_width: entered");
+        raw_value_to_width::<usize>(N)
     }
 
     // NOTE: You are unlikely to ever need to implement this
@@ -776,13 +750,13 @@ println!("CachelineClassic: cacheline_size entered");
         result as usize
     }
 
-    // Return the number of bits used to index into the cache, i.e. the index
-    // of a cache line in the cache. A cache with 1024 lines will have an
-    // index using 10 bits.
-    fn cache_index_width(&self) -> usize
-    {
-println!("CacheClassicBase: cache_index_width: entered");
-        raw_value_to_width::<usize>(N)
+    // NOTE: You are unlikely to ever need to implement this
+    // Extract the cache index part of the address
+    fn cache_index(&self, p: Addr) -> usize where Self: Sized {
+        let cacheline_width = <CL as CachelineClassicBase<D, S>>
+            ::cacheline_width();
+        let cache_index_width = CacheClassicBase::cache_index_width(self);
+        (p as usize >> cacheline_width) & ((1 << cache_index_width) - 1)
     }
 
     // Return the number of cache lines in the index.
@@ -792,63 +766,6 @@ println!("CacheClassicBase: cache_index_width: entered");
         1 << CacheClassicBase::cache_index_width(self)
     }
 
-    // Return the size of a MemArea in cachelines
-    //
-    // NOTE: You are unlikely to ever need to implement this
-    fn size_in_cachelines(&self, scrub_area: &MemArea) -> Addr {
-        <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
-              ::size_in_cachelines(scrub_area)
-/*
-        let cacheline_width =
-            <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
-              ::cacheline_width();
-        let start_in_cachelines = scrub_area.start >> cacheline_width;
-        // This will truncate the number of cache lines by one
-        let end_in_cachelines = scrub_area.end >> cacheline_width;
-        (end_in_cachelines - start_in_cachelines) + 1
-*/
-    }
-
-    // NOTE: You are unlikely to ever need to implement this
-    // Extract the cache index part of the address
-    fn cache_index(&self, p: Addr) -> usize where Self: Sized {
-        let cacheline_width = CacheClassicBase::cacheline_width(self);
-        let cache_index_width = CacheClassicBase::cache_index_width(self);
-        (p as usize >> cacheline_width) & ((1 << cache_index_width) - 1)
-    }
-
-/*
-    // NOTE: You are unlikely to ever need to implement this
-    // Computes the offset, in cache lines, of the next address at or higher
-    // than the given pointer for an address hitting the given cache index.
-    //
-    // p:       Address to start at
-    // index:   Cache index to search for
-    fn first_offset_for_index(&self, p: Addr, index: usize) -> usize {
-        let start_index = self.cache_index(p);
-        let cache_lines = self.cache_lines();
-
-        // Compute the offset from the start of the self.scrub_area to the
-        // next highest address whose cache index is the one we are currently
-        // scrubbing. 
-        if index >= start_index { index - start_index }
-        else { (index + cache_lines) - start_index }
-    }
-*/
-
-    // NOTE: You are unlikely to ever need to implement this
-    // This function is given a pointer to a cache line-aligned address with
-    // as many bytes as are in a cache line. The implementation should do
-    // whatever is necessary to ensure all bytes are read in order to trigger
-    // a fault if any bits have an unexpected value. So long as the number
-    // of bad bits is small enough (ECC-dependent), corrected data should
-    // be written back to that location, preventing the accumulation of so many
-    // bad bits that the correct value cannot be determined.
-    fn read_cacheline<'a>(&self, ptr: Addr) {
-        <CachelineClassic<D, S> as CachelineClassicBase<D, S>>
-            ::read_cacheline(ptr);
-    }
-*/
 }
 
 /*
@@ -860,7 +777,16 @@ where
 {
     fn check_scrubber_params(cache: &'a CacheClassic<N, W, D, S>,
         scrub_areas: &'a [MemArea]) -> Result<(), Error>  where Self: Sized {
+unimplemented!();
+/*
 println!("In MemoryScrubberClassicBase");
+        // Check the base trait for this trait
+        MemoryScrubberBase
+            ::check_scrubber_params(self as &dyn MemoryScrubberBase)?;
+
+
+
+
         <MemoryScrubberClassic<N, W, D, S> as MemoryScrubberBase
             <CacheClassic<N, W, D, S>, CachelineClassic<D, S>>>
             ::check_scrubber_params(cache, scrub_areas)?;
@@ -868,6 +794,7 @@ println!("In MemoryScrubberClassicBase: no problem");
         value_to_width::<usize>(W)?;
         Ok(())
     }
+*/
 }
 */
 
