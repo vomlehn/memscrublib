@@ -12,32 +12,39 @@
 // ============
 // What is a memory scrubber and why would you use one?
 //
-// A memory scrubber is simply a piece of hardware or software that reads all
-// bytes from a section of memory, usually from all of memory. This is an
-// implementation of a software memory scrubber. When a processor reads from
-// memory protected by an error correction code (ECC), it checks to see if
-// there are errors in the piece of memory it has read. If so, in hardware or
-// software, the ECC is used to correct the errors and the corrected value
-// used to replace the bad value. The memory scrubber is run frequently
-// enough that errors don't have a chance to accumulate
+// RAM is often manipulated as a small number, 4-8, bytes. For each of these
+// groups of bytes, an error correction code (ECC) is computed and stored with
+// the data. When the processor reads data, the ECC is also read. The ECC is
+// used to correct errors and write the corrected data back to RAM. Each ECC
+// implementation will have a limit on the total number of errors it can
+// correct for a particular group of bytes. Since errors accumulate over time,
+// data that has not been read in a long time may have so many errors that it
+// is no longer possible to determine what the correct data was. A memory
+// scrubber is responsible for reading all ECC-protected data at a rate fast
+// enough that the number of errors to be corrected remains within the ability
+// of the ECC code used to correct it.
 //
-// This memory scrubber is specifically designed to allow the reduction of
-// the impact of memory scrubbing. A simple memory scrubber might sequentially
-// touch data one cache line apart. After touching a product of the number
-// of cache lines in the cache and the number of ways per cache line, the
-// previous contents of the cache will be complete evicted, requiring reloading
-// when returning to the previous task. With 1024 cache lines and 4 ways,
-// complete eviction will occur after 4096 touches.
+// This memory scrubber is specifically designed to reduce the performance
+// impact of memory scrubbing. Let us take the case of a system with 16 MB
+// memory--one large enough to run a minimal Linux system. The processor's
+// cache has 64-byte cache lines, 4 ways, and 1024 cache lines.
 //
-// This memory scrubber is cache aware. As such, it scans through all addresses
-// for a single cache line before advancing to the next cache line. With
-// a 1 GB memory, 1024 cache lines, and a 64-byte cache line, it takes
-// 16384 touches to evict a single cache line and 1677216 touches to evict
-// the entire cache. This is a rate 2.4% of the simple approach.
+// A simple memory scrubber might sequentially read data one cache line
+// apart, resulting in 16 MB / 1024 = 16384 reads. The cache is completely
+// evicted after the product of the number of ways and the number of cache
+// lines, i.e 4 * 1024 = 4096. So, the entire cache is evicted 4096 times
+// for a scrub of all of memory. Tasks running in parallel with the simple
+// memory scrubber may derive little benefit from the cache during this period.
 //
-// Using the cache aware memory scrubber is only useful if only part of
-// memory is scrubbed at a time, but the rate of accumulation of error is
-// slow enough that this is a very reasonable thing to do.
+// The  memory scrubber implemented is cache aware. It does the same number of
+// reads as the simple approach, but it only evicts all of cache once. For our
+// example, it evicts cache at a rate 1 / 4096 = 0.02% of the simple memory
+// scrubber. For more capable systems, the difference becomes even larger.
+// The amount of benefit actually achieved is heavily dependent on the extent
+// to which the memory scrubber runs in parallel with other tasks. Still, even
+// if this is rate, the cache-aware memory scruber is unlikely to create a
+// sudden drop in cache effectiveness. If this happens at a critical time, the
+// systems could be adversely affected.
 //
 // NOTE: This is not intended to cover all possible cache
 // implementations. Code to cover other variations is welcome.
@@ -1154,56 +1161,86 @@ println!("CacheClassic::CacheBase3: cache_index_width: entered");
 }
 */
 
-/*
-pub struct MemoryScrubberClassic<'a, const N: usize, const W: usize, D, const S: usize>
+pub struct MemoryScrubberClassic<'a, C, CL, const N: usize, const W: usize, D, const S: usize>
 where
+    C: CacheClassicBase<CL, N, W, D, S>,
+    CL: CachelineClassicBase<D, S>,
     D: Num
 {
     my_cache:       CacheClassic<N, W, D, S>,
     my_scrub_areas: &'a [MemArea],
+    _marker1:       PhantomData<C>,
+    _marker2:       PhantomData<CL>,
 }
 
-impl<'a, const N: usize, const W: usize, D, const S: usize>
-MemoryScrubberClassic<'a, N, W, D, S>
+impl<'a, C, CL, const N: usize, const W: usize, D, const S: usize>
+MemoryScrubberClassic<'a, C, CL, N, W, D, S>
 where
+    C: CacheClassicBase<CL, N, W, D, S>,
+    CL: CachelineClassicBase<D, S>,
     D: Num
 {
     fn check_scrubber_params(cache: &CacheClassic<N, W, D, S>,
         scrub_areas: &[MemArea]) -> Result<(), Error> {
-        <MemoryScrubberClassic<N, W, D, S> as MemoryScrubberClassicBase<N, W, D, S>>
-            ::check_scrubber_params(cache, scrub_areas)?;
+        // FIXME: Don't I need to check scrub_areas?
+        //<MemoryScrubberClassic<C, CL, N, W, D, S> as MemoryScrubberClassicBase<C, CL, N, W, D, S>>
+        // Ambiguous: <dyn MemoryScrubberClassicBase<C, CL, N, W, D, S>>
+        // Nah, "MemoryScrubberClassicBase<C, CL, N, W, D, S>
+        // for CacheClassic<N< W, D, S>" must be implemented.
+        // Size problems: <dyn MemoryScrubberClassicBase<C, CL, N, W, D, S>
+        //    as MemoryScrubberClassicBase<C, CL, N, W, D, S>>
+        // Recursive call:           Self::check_scrubber_params(cache, scrub_areas)?;
+        // FIXME: come back and figure this one out
+        // let c = cache as &dyn CacheBase<CL>;
+        //MemoryScrubberBase::check_scrubber_params(c)?;
+
         Ok(())
     }
 
     fn new(cache: CacheClassic<N, W, D, S>,
         scrub_areas: &'a [MemArea]) ->
-        Result<MemoryScrubberClassic<'a, N, W, D, S>, Error>
+        Result<MemoryScrubberClassic<'a, C, CL, N, W, D, S>, Error>
     {
         Self::check_scrubber_params(&cache, scrub_areas)?;
 
-        Ok(MemoryScrubberClassic::<N, W, D, S> {
+        Ok(MemoryScrubberClassic::<C, CL, N, W, D, S> {
             my_cache:       cache,
             my_scrub_areas: scrub_areas,
+            _marker1:       PhantomData,
+            _marker2:       PhantomData,
         })
     }
 }
 
-    // At this point, it's pretty much Iterators all the way down.
-impl<'a, const N: usize, const W: usize, D, const S: usize>
-MemoryScrubberClassicBase<'a, N, W, D, S>
-for MemoryScrubberClassic<'a, N, W, D, S>
+// FIXME: do I really need to supply C/CL. I know I need N/W/D/S because lower
+// level things use this. Or, maybe I don't. I might be able to get away with
+// C/CL/D/W. Perhaps I can use C/CL/CD.
+impl<'a, C, CL, const N: usize, const W: usize, D, const S: usize>
+MemoryScrubberClassicBase<C, CL, N, W, D, S>
+for MemoryScrubberClassic<'a, C, CL, N, W, D, S>
 where
+    C:  CacheClassicBase<CL, N, W, D, S>,
+    CL: CachelineClassicBase<D, S>,
     D: Num + 'a,
 {
+    fn cache(&self) -> &dyn CacheClassicBase<CL, N, W, D, S> {
+        &self.my_cache
+    }
+
+    fn scrub_areas(&self) -> &[MemArea] {
+        self.my_scrub_areas
+    }
 }
 
-impl<'a, const N: usize, const W: usize, D, const S: usize>
-MemoryScrubberBase<'a, CacheClassic<N, W, D, S>, CachelineClassic<D, S>>
-for MemoryScrubberClassic<'a, N, W, D, S>
+impl<'a, C, CL, const N: usize, const W: usize, D, const S: usize>
+MemoryScrubberBase<C, CL>
+for MemoryScrubberClassic<'a, C, CL, N, W, D, S>
 where
+    C: CacheClassicBase<CL, N, W, D, S>,
+    CL: CachelineClassicBase<D, S>,
     D: Num + 'a,
 {
-    fn cache(&self) -> &dyn CacheBase<CachelineClassic<D, S>> {
+    fn cache(&self) -> &dyn CacheBase<CL> {
 println!("MemoryScrubberClassic:MemoryScrubberBase1: entered");
         &self.my_cache
     }
@@ -1212,7 +1249,7 @@ println!("MemoryScrubberClassic:MemoryScrubberBase1: entered");
     }
 }
 
-/*
+/* FIXME: uncomment this
 pub struct MemoryScrubber<'a, C, CL, N, W, CLD, D, S> {
     // Create a new memory scrubber
     // cache_in - Description of the cache
@@ -1262,8 +1299,6 @@ pub struct MemoryScrubber<'a, C, CL, N, W, CLD, D, S> {
         Ok(())
     }
 }
-*/
-*/
 
 // cache - Description of the cache
 pub struct MemoryScrubber<'a, C, CL>
@@ -1327,14 +1362,16 @@ println!("MemoryScrubber:MemoryScrubberBase1: entered");
         self.scrub_areas
     }
 }
+*/
 
+/*
 // Read a given number of cache lines
 pub struct ScrubCountIterator<'a, C, CL>
 where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    scrubber:       &'a dyn MemoryScrubberBase<'a, C, CL>,
+    scrubber:       &'a dyn MemoryScrubberBase<C, CL>,
     n_scrublines:   Addr,
     i:              Addr,
     iterator:       ScrubAreasIterator<'a, C, CL>,
@@ -1347,7 +1384,7 @@ where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<'a, C, CL> + 'a),
+    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<C, CL> + 'a),
         n_scrublines: Addr) ->
         Result<ScrubCountIterator<'a, C, CL>, Error> {
         let iterator = ScrubAreasIterator::new(scrubber)?;
@@ -1398,7 +1435,7 @@ where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    scrubber:       &'a dyn MemoryScrubberBase<'a, C, CL>,
+    scrubber:       &'a dyn MemoryScrubberBase<C, CL>,
     iterator:       CacheIndexIterator::<'a, C, CL>,
     _marker1:       PhantomData<CL>,
 }
@@ -1409,7 +1446,7 @@ where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<'a, C, CL> + 'a)) ->
+    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<C, CL> + 'a)) ->
         Result<ScrubAreasIterator<'a, C, CL>, Error> {
         let iterator = CacheIndexIterator::<C, CL>::new(scrubber)?;
 
@@ -1466,7 +1503,7 @@ where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    scrubber:       &'a dyn MemoryScrubberBase<'a, C, CL>,
+    scrubber:       &'a dyn MemoryScrubberBase<C, CL>,
     iterator:       MemAreasIterator<'a, C, CL>,
     cur_index:      usize,
 }
@@ -1477,7 +1514,7 @@ where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<'a, C, CL> + 'a)) ->
+    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<C, CL> + 'a)) ->
         Result<CacheIndexIterator<'a, C, CL>, Error> {
         let cur_index = 0;
         let iterator = MemAreasIterator::<C, CL>::new(scrubber, cur_index)?;
@@ -1539,7 +1576,7 @@ where
     CL: CachelineBase + ?Sized,
 {
 
-    scrubber:       &'a dyn MemoryScrubberBase<'a, C, CL>,
+    scrubber:       &'a dyn MemoryScrubberBase<C, CL>,
     iterator:       MemAreaIterator<'a, C, CL>,
     i:              usize,
     cur_index:      usize,
@@ -1552,7 +1589,7 @@ where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<'a, C, CL> + 'a), cur_index: usize) ->
+    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<C, CL> + 'a), cur_index: usize) ->
         Result<MemAreasIterator<'a, C, CL>, Error> {
         if scrubber.scrub_areas().len() == 0 {
             return Err(Error::NoMemAreas);
@@ -1608,6 +1645,7 @@ println!("MemAreasIterator: next()");
         }
     }
 }
+*/
 
 // MemAreaIterator to scan a MemArea, keeping on a single cache line as
 // long as possible. This means that we increment the addresses we can by
@@ -1623,7 +1661,7 @@ where
     C:  CacheBase<CL>,
     CL: CachelineBase + ?Sized,
 {
-    scrubber: &'a (dyn MemoryScrubberBase<'a, C, CL> + 'a),
+    scrubber: &'a (dyn MemoryScrubberBase<C, CL> + 'a),
     scrub_area: &'a MemArea,
     i:          usize,
     cur_index:  usize,
@@ -1642,7 +1680,7 @@ where
     // cur_index:   Cache index we're looking for
     //
     // Returns: Ok(MemAreaIterator) on success, Err(Error) on failure
-    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<'a, C, CL> + 'a),
+    pub fn new(scrubber: &'a (dyn MemoryScrubberBase<C, CL> + 'a),
         scrub_area: &'a MemArea, cur_index: usize) ->
         Result<MemAreaIterator<'a, C, CL>, Error> {
         if scrub_area.start == scrub_area.end {
@@ -1670,6 +1708,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
 println!("MemAreasIterator: next()");
+/*
         let cache_index_width = self.scrubber.cache().cache_index_width();
 
         let first_offset =
@@ -1693,6 +1732,8 @@ println!("MemAreasIterator: next()");
         let cur_offset_in_bytes = cur_offset << cacheline_width;
         let p = self.scrub_area.start + cur_offset_in_bytes;
         return Some(p)
+*/
+        return None
     }
 }
 
