@@ -543,7 +543,7 @@ where
 pub trait MemoryScrubberBase<C, CL>
 where
     C: CacheBase<CL>,
-    CL: CachelineBase,
+    CL: CachelineBase + ?Sized,
 {
     fn cache(&self) -> &dyn CacheBase<CL>;
     fn scrub_areas(&self) -> &[MemArea];
@@ -1564,6 +1564,7 @@ println!("CacheIndexIterator: next()");
         }
     }
 }
+*/
 
 // This iterator goes through all defined scrub areas
 // cache:  Cache descriptor
@@ -1582,7 +1583,6 @@ where
     cur_index:      usize,
 }
 
-
 impl<'a, C, CL>
 MemAreasIterator<'a, C, CL>
 where
@@ -1591,9 +1591,10 @@ where
 {
     pub fn new(scrubber: &'a (dyn MemoryScrubberBase<C, CL> + 'a), cur_index: usize) ->
         Result<MemAreasIterator<'a, C, CL>, Error> {
-        if scrubber.scrub_areas().len() == 0 {
-            return Err(Error::NoMemAreas);
-        }
+// FIXME: restore this
+//        if scrubber.scrub_areas().len() == 0 {
+//            return Err(Error::NoMemAreas);
+//        }
 
         let iterator = MemAreaIterator::<C, CL>::new(scrubber,
             &scrubber.scrub_areas()[0], cur_index)?;
@@ -1645,7 +1646,6 @@ println!("MemAreasIterator: next()");
         }
     }
 }
-*/
 
 // MemAreaIterator to scan a MemArea, keeping on a single cache line as
 // long as possible. This means that we increment the addresses we can by
@@ -1708,7 +1708,6 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
 println!("MemAreasIterator: next()");
-/*
         let cache_index_width = self.scrubber.cache().cache_index_width();
 
         let first_offset =
@@ -1721,19 +1720,19 @@ println!("MemAreasIterator: next()");
 
         // If this offset is greater than or equal to the number of cache
         // lines in the current scrub area, we're done.
-        let size_in_cachelines = self.scrubber.cache()
-            .size_in_cachelines(&self.scrub_area);
+        // FIXME: shouldn't I be able to use something like:
+        // let size_in_cachelines = self.scrubber.cache()
+        //    .size_in_cachelines(&self.scrub_area);
+        let size_in_cachelines = CL::size_in_cachelines(&self.scrub_area);
         if cur_offset >= size_in_cachelines {
             return None;
         }
 
-        let cacheline_width = self.scrubber.cache().cacheline_width();
+        let cacheline_width = CL::cacheline_width();
         self.i += 1;
         let cur_offset_in_bytes = cur_offset << cacheline_width;
         let p = self.scrub_area.start + cur_offset_in_bytes;
         return Some(p)
-*/
-        return None
     }
 }
 
@@ -2945,7 +2944,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     for MemAreaIterator<'a, C, CL>
     where
         C:  CacheBase<CL>,
-        CL: CachelineBase,
+        CL: CachelineBase + ?Sized,
     {
     }
 
@@ -3026,7 +3025,7 @@ println!("In TestMemoryScrubberBase: no problem");
         // is the size used to call this function.
         fn new<CL>(size: Addr) -> Mem 
         where
-            CL: CachelineBase
+            CL: CachelineBase + ?Sized,
         {
             let cacheline_size = CL::cacheline_size();
 println!("Mem::new cacheline_size {}", cacheline_size);
