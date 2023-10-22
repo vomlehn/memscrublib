@@ -15,6 +15,9 @@
 // FIXME: Incorporate memory mapping, perhaps in a two-level approach where
 //        there are a set of mapping areas, which then include scrubbing
 //        areas.
+// FIXME: In kernel or not? Using /dev/mem opens a potential security
+//        vulnerability, Putting in the kernel is extra crap, but also supports
+//        a the possibility of an ECC self-test interface in /sys.
 //
 // This is code for a memory scrubber.
 //
@@ -580,7 +583,7 @@ where
     // Check cache line related parameters.
     //
     // Returns Result<(), Error>
-    fn check_cacheline_params() -> Result<(), Error> {
+    fn check_cacheline_params() -> Result<(), Error> where Self: Sized {
         value_to_width::<usize>(std::mem::size_of::<D>())?;
         value_to_width::<usize>(S)?;
         Ok(())
@@ -592,12 +595,12 @@ where
     }
 
     // Return the number of bytes in a cache line
-    fn cacheline_size() -> usize {
+    fn cacheline_size() -> usize where Self: Sized {
         1 << Self::cacheline_width()
     }
 
     // Return the size of a MemArea in cache lines
-    fn size_in_cachelines(scrub_area: &MemArea) -> Addr {
+    fn size_in_cachelines(scrub_area: &MemArea) -> Addr where Self: Sized {
         let cacheline_width = Self::cacheline_width();
         let start_in_cachelines = scrub_area.start >> cacheline_width;
         // This will truncate the number of cache lines by one
@@ -605,7 +608,7 @@ where
         ((end_in_cachelines - start_in_cachelines) + 1) as Addr
     }
 
-    fn read(p: Addr) -> D {
+    fn read(p: Addr) -> D where Self: Sized {
         let a_ref: &[D; S] = unsafe {&*(p as *const _) };
         unsafe { ptr::read(&a_ref[0]) }
     }
@@ -616,13 +619,12 @@ where
     }
 }
 
-
 // FIXME: is there any way to drop the CL parameter and define it in terms
 // of N, W, D, and S?
 pub trait CacheBase<CL, CLD, const N: usize, const W: usize, D,
     const S: usize>
 where
-    CL: CachelineBase<CLD, D, S> + ?Sized,
+    CL: CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD: CachelineDataBase<D, S> + ?Sized,
     D: Num,
 {
@@ -643,12 +645,17 @@ println!("CacheBase: cache_index_width: entered");
         value_to_width::<usize>(N).unwrap()
     }
 
-    // NOTE: You are unlikely to ever need to implement this
-    // Computes the offset, in cache lines, of the next address at or higher
-    // than the given pointer for an address hitting the given cache index.
-    //
-    // p:       Address to start at
-    // index:   Cache index to search for
+    /// Computes the offset, in cache lines, of the next address at or higher
+    /// than the given pointer for an address hitting the given cache index.
+    ///
+    /// NOTE: You are unlikely to ever need to implement this
+    ///
+    /// # Attributes
+    /// * `p` - Address to start at
+    /// * `index` - Cache index to search for
+    ///
+    /// # Return value
+    /// The offset to the next address
     fn offset_to_next_index(&self, p: Addr, index: usize) ->
         usize where Self: Sized {
 // FIXME: can I just use Self now?
@@ -665,8 +672,13 @@ println!("CacheBase: cache_index_width: entered");
         result as usize
     }
 
-    // NOTE: You are unlikely to ever need to implement this
-    // Extract the cache index part of the address
+    /// Extract the cache index part of the address
+    /// # Parameters
+    /// * `self` - Self
+    /// * `p` - Address from which the cache index is to be extracted
+    /// NOTE: You are unlikely to ever need to implement this
+    /// # Return value
+    /// The cache line index
     fn cache_index(&self, p: Addr) -> usize where Self: Sized {
 // FIXME: can I just use CL now?
         let cacheline_width = <CL as CachelineBase<CLD, D, S>>
@@ -879,7 +891,7 @@ pub struct ScrubAreasIterator<'a, C, CL, CLD, const N: usize, const W: usize,
     D, const S: usize>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -895,7 +907,7 @@ impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
 ScrubAreasIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -919,7 +931,7 @@ iter::Iterator for
 ScrubAreasIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -960,7 +972,7 @@ pub struct CacheIndexIterator<'a, C, CL, CLD, const N: usize, const W: usize,
     D, const S: usize>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -976,7 +988,7 @@ impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
 CacheIndexIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1001,7 +1013,7 @@ iter::Iterator
 for CacheIndexIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1048,7 +1060,7 @@ pub struct MemAreasIterator<'a, C, CL, CLD, const N: usize, const W: usize, D,
     const S: usize>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1065,7 +1077,7 @@ impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
 MemAreasIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1095,7 +1107,7 @@ iter::Iterator
 for MemAreasIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1144,7 +1156,7 @@ pub struct MemAreaIterator<'a, C, CL, CLD, const N: usize, const W: usize, D,
     const S: usize>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1161,7 +1173,7 @@ impl <'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
 MemAreaIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:  CacheBase<CL, CLD, N, W, D, S>,
-    CL: CachelineBase<CLD, D, S> + ?Sized,
+    CL: CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1196,7 +1208,7 @@ iter::Iterator
 for MemAreaIterator<'a, C, CL, CLD, N, W, D, S>
 where
     C:      CacheBase<CL, CLD, N, W, D, S>,
-    CL:     CachelineBase<CLD, D, S> + ?Sized,
+    CL:     CachelineBase<CLD, D, S>/*  + ?Sized */,
     CLD:    CachelineDataBase<D, S> + ?Sized,
     D:      Num,
 {
@@ -1255,7 +1267,7 @@ where
 {
 }
 
-type CachelineType<D:Num, const S: usize> =
+type Cacheline<D:Num, const S: usize> =
     Cacheline_<CachelineData<D, S>, D, S>;
 
 pub struct Cacheline_<CLD, D, const S: usize>
@@ -1280,6 +1292,13 @@ where
             ::check_cacheline_params()?;
         Ok(())
     }
+
+    fn new() -> Cacheline_<CLD, D, S>{
+        Cacheline_::<CLD, D, S> {
+            _marker1:   PhantomData,
+            _marker2:   PhantomData,
+        }
+    }
 }
 
 
@@ -1293,8 +1312,8 @@ where
 }
 
 type CacheType<const N: usize, const W: usize, D: Num, const S: usize> =
-//    Cache_<CachelineType<CachelineData<D, S>, D, S>,
-    Cache_<CachelineType<D, S>,
+//    Cache_<Cacheline<CachelineData<D, S>, D, S>,
+    Cache_<Cacheline<D, S>,
     CachelineData<D, S>, N, W, D, S>;
 
 pub struct Cache_<CL, CLD, const N: usize, const W: usize, D,
@@ -1304,6 +1323,7 @@ where
     CLD:    CachelineDataBase<D, S>,
     D:      Num
 {
+    cacheline:  Cacheline<D, S>,
     _marker1:   PhantomData<CL>,
     _marker2:   PhantomData<CLD>,
     _marker3:   PhantomData<D>,
@@ -1319,7 +1339,11 @@ where
 //    Cache<CL, CLD, N, W, D, S>: CacheBase<Cacheline<CLD, D, S>, CLD>
 {
     fn new() -> Self {
+//        let cacheline = <CL>::new();
+        let cacheline = Cacheline::<D, S>::new();
+
         Cache_::<CL, CLD, N, W, D, S> {
+            cacheline:  cacheline,
             _marker1:   PhantomData,
             _marker2:   PhantomData,
             _marker3:   PhantomData,
@@ -1408,7 +1432,7 @@ println!("Cache::CacheBase1: cache_index_width: entered");
 
 type MemoryScrubberType<'a, const N: usize, const W: usize, D: Num,
     const S: usize> = MemoryScrubber_<'a, CacheType<N, W, D, S>,
-    CachelineType<D, S>, CachelineData<D, S>, N, W, D, S>;
+    Cacheline<D, S>, CachelineData<D, S>, N, W, D, S>;
 
 /// # Attributes
 ///
@@ -1658,7 +1682,7 @@ pub trait AutoScrubDesc<C, CL> {
 
 type AutoScrubType<'a, const N: usize, const W: usize, D: Num,
     const S: usize> = AutoScrub<'a, CacheType<N, W, D, S>,
-    CachelineType<D, S>, CachelineData<D, S>, N, W, D, S>;
+    Cacheline<D, S>, CachelineData<D, S>, N, W, D, S>;
 
 struct AutoScrub<'a, C, CL, CLD, const N: usize, const W: usize, D,
     const S: usize>
@@ -1741,17 +1765,6 @@ where
     CLD: CachelineDataBase<D, S>,
 {
 }
-/*
-impl<'a, C, CL, CLD, const N: usize, const W: usize, D: Num, const S: usize>
-CacheBase<CL, CLD, N, W, D, S>
-for AutoScrub<'a, C, CL, CLD, N, W, D, S>
-where
-    C: CacheBase<CL, CLD, N, W, D, S>,
-    CL: CachelineBase<CLD, D, S>,
-    CLD: CachelineDataBase<D, S>,
-{
-}
-*/
 
 #[cfg(test)]
 mod tests {
@@ -1771,7 +1784,7 @@ mod tests {
 //        Cacheline,
         CachelineBase,
         CachelineDataBase,
-        CachelineType,
+        Cacheline,
         CacheType,
 //        CachelineData,
         Error,
@@ -1787,51 +1800,104 @@ mod tests {
     // Traits for testing
     // ==================
     trait TestCachelineDataBase<D, const S: usize>:
-        CachelineDataBase<D, S>
+        CachelineDataBase<D, S> + Index<usize>
     where
         D:      Num,
     { }
 
-    trait TestCachelineBase<CLD, D, const S: usize>:
+    trait TestCachelineBase<D, const S: usize>:
+//        TestCachelineBase_<TestCachelineDataBase<D, S, Output = D>, D, S>
+        TestCachelineBase_<dyn TestCachelineDataBase<D, S, Output = D>, D, S>
+    where
+        D:      Num,
+    { }
+
+    trait TestCachelineBase_<CLD, D, const S: usize>:
         CachelineBase<CLD, D, S>
     where
-        CLD:    TestCachelineDataBase<D, S>,
+        CLD:    TestCachelineDataBase<D, S> + ?Sized,
         D: Num,
     { }
 
-    trait TestCacheBase<'a, CL, CLD, const N: usize, const W: usize, D,
-        const S: usize>: CacheBase<CL, CLD, N, W, D, S>
+/*
+    trait TestCacheBase<'a, const N: usize, const W: usize, D, const S: usize>:
+//        TestCacheBase_<'a, CachelineBase<CachelineDataBase<D, S>, D, S>,
+//        CachelineDataBase<D, S>, N, W, D, S>
+        TestCacheBase_<'a, TestCachelineBase_<D, S>,
+        TestCachelineDataBase<D, S, Output = D>, N, W, D, S>
     where
-        CL:     CachelineBase<CLD, D, S>,
-        CLD:    CachelineDataBase<D, S>,
         D:  Num + 'a,
     { }
+*/
 
-/*
     // TestCacheBase - Description of the cache for basic tests
     // cache_index_width - Number of times this cacheline was iit during the
     //      scrub
     // read_infos:          Array of ReadInfo items>
-    #[derive(Debug)]
-    struct TestCache<CL, const N: usize, DI, D, const S: usize>
+    trait TestCacheBase_<'a, CL, CLD, const N: usize, const W: usize, D,
+        const S: usize>: CacheBase<CL, CLD, N, W, D, S>
     where
-        CL: ?Sized,
-        DI: ?Sized,
+        CL:     CachelineBase<CLD, D, S>/* + ?Sized */,
+        CLD:    CachelineDataBase<D, S> + ?Sized,
+        D:  Num + 'a,
+    {
+        fn new() -> Self;
+    }
+
+/*
+    trait TestMemoryScrubberBase<'a, const N: usize,
+        const W: usize, D, const S: usize>:
+        TestMemoryScrubberBase_<'a, dyn TestCacheBase<'a, N, W, D, S>,
+            dyn TestCachelineBase<D, S>,
+            dyn TestCachelineDataBase<D, S, Output = D>, N, W, D, S>
+    where
+        D:      Num + 'a,
+    { }
+*/
+
+    trait TestMemoryScrubberBase_<'a, C, CL, CLD, const N: usize,
+        const W: usize, D, const S: usize>:
+        MemoryScrubberBase<C, CL, CLD, N, W, D, S>
+    where
+        C:      TestCacheBase_<'a, CL, CLD, N, W, D, S>,
+// Not sure why I have to add CachelineBase here
+        CL:     TestCachelineBase<D, S> + CachelineBase<CLD, D, S>,
+        CLD:    TestCachelineDataBase<D, S>,
+        D:      Num + 'a,
+    {
+        fn check_scrubber_params(cache: &C, scrub_areas: &[MemArea]) ->
+            Result<(), Error> where Self: Sized {
+    println!("In TestMemoryScrubberBase");
+            <TestMemoryScrubber_<C, CL, CLD, N, W, D, S> as
+                    MemoryScrubberBase<C, CL, CLD, N, W, D, S>>
+                ::check_scrubber_params(cache, scrub_areas)?;
+    println!("In TestMemoryScrubberBase: no problem");
+                Ok(())
+        }
+    }
+
+    // Types for testing
+    // =================
+    #[derive(Debug)]
+    struct TestCache<CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    where
+        CL: TestCachelineBase<D, S> + ?Sized,
+        CLD: TestCachelineDataBase<D, S>,
         D: Num,
     {
         // FIXME: Remove when possible. Right now, the compiler doesn't appear
         // to know that U is actually used when it's in CacheBase<CL>. So, this
         // works around that problem
         _marker1:    PhantomData<CL>,
-        _marker2:    PhantomData<DI>,
+        _marker2:    PhantomData<CLD>,
         _marker3:    PhantomData<D>,
     }
 
-    impl<'a, CL, const N: usize, DI, D, const S: usize>
-    TestCacheBase<CL, DI, D, S>
+    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    TestCache<CL, CLD, N, W, D, S>
     where
-        CL: TestCachelineBase<DI, D, {S}>,
-        DI: TestCacheDataIndexedBase<D, S> /* + ?Sized */,
+        CL: TestCachelineBase<D, S>,
+        CLD: TestCachelineDataBase<D, S>,
         D: Num,
     {
         fn new() -> Self {
@@ -1845,39 +1911,40 @@ mod tests {
         }
     }
 
-    impl<'a, CL, const N: usize, DI, D, const S: usize>
-    Test<'a, CL, N, DI, D, S>
-    for TestCacheBase<CL, DI, D, S>
+    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    Test<'a, CLD, N, W, D, S>
+    for TestCache<CL, CLD, N, W, D, S>
     where
-        CL: TestCachelineBase<DI, D, S>,
-        DI: TestCacheDataIndexedBase<D, S>,
+        CL: TestCachelineBase<D, S>,
+        CLD: TestCachelineDataBase<D, S>,
         D: Num,
     {
-        fn test(&mut self, _cacheline_ptr: *const CL) {
+        fn test(&mut self, _cacheline_ptr: *const CLD) {
             unimplemented!();
         }
     }
-*/
 
-/*
-    impl<'a, CL, const N: usize, DI, D, const S: usize>
-    CacheBase
-    for TestCacheBase<CL, DI, D, S>
+    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    CacheBase<CL, CLD, N, W, D, S>
+    for TestCache<CL, CLD, N, W, D, S>
     where
-        CL: TestCachelineBase<DI, D, S>,
-        DI: TestCacheDataIndexedBase<D, S>,
+// Not sure why I have to add CachelineBase here
+        CL: TestCachelineBase<D, S> + CachelineBase<CLD, D, S>,
+        CLD: TestCachelineDataBase<D, S>,
         D: Num,
     {
     }
 
-    impl<'a, CL, const N: usize, DI, D, const S: usize>
+/*
+    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
     CacheBase
-    for TestCacheBase<CL, DI, D, S>
+    for TestCache<CL, CLD, N, W, D, S>
     where
-        CL: TestCachelineBase<DI, D, S>,
-        DI: TestCacheDataIndexedBase<D, S>,
+        CL: TestCachelineBase<CLD, N, W, D, S>,
+        CLD: TestCachelineDataBase<D, S>,
         D: Num,
     {
+/*
         fn cacheline_width(&self) -> usize {
             unimplemented!();
         }
@@ -1887,43 +1954,57 @@ mod tests {
         fn read_cacheline(&self, _cacheline_ptr: *const dyn CachelineBase) {
             unimplemented!();
         }
+*/
     }
+*/
 
     // This clues the compiler in that I know what I'm doing by having a
     // *const pointer in the struct
-    unsafe impl<'a, CL, const N: usize, DI, D, const S: usize>
-    Sync for TestCacheBase<CL, DI, D, S>
+    unsafe impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    Sync
+    for TestCache<CL, CLD, N, W, D, S>
     where
-        CL: TestCachelineBase<DI, D, S>,
-        DI: TestCacheDataIndexedBase<D, S> /* + ?Sized */,
+        CL: TestCachelineBase<D, S>,
+        CLD: TestCachelineDataBase<D, S> /* + ?Sized */,
         D: Num,
     {}
 
-    impl<'a, CL, const N: usize, DI, D, const S: usize>
-    Clone for TestCacheBase<CL, DI, D, S>
+    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    Clone
+    for TestCache<CL, CLD, N, W, D, S>
     where
-        CL: TestCachelineBase<DI, D, S>,
-        DI: TestCacheDataIndexedBase<D, S>,
+        CL: TestCachelineBase<D, S>,
+        CLD: TestCachelineDataBase<D, S>,
         D: Num,
     {
         fn clone(&self) -> Self {
-            TestCacheBase {
-                cache_index_width:  self.cache_index_width,
+            TestCache{
                 _marker1:           PhantomData,
                 _marker2:           PhantomData,
                 _marker3:           PhantomData,
             }
         }
     }
-*/
 
-    // Types for testing
-    // =================
+    #[repr(C)]
     struct TestCachelineData<D, const S: usize>
     where
         D:      Num,
     {
-        _marker1:   PhantomData<D>,
+        data:   [D; S],
+    }
+
+    impl<D, const S: usize>
+    Index<usize>
+    for TestCachelineData<D, S>
+    where
+        D:      Num,
+    {
+        type Output = D;
+
+        fn index(&self, i: usize) -> &Self::Output {
+            &self.data[i]
+        }
     }
 
     struct TestCacheline<D, const S: usize>
@@ -1954,431 +2035,57 @@ mod tests {
         D:      Num,
     {
     }
-/* STOP HERE
 
-    struct TestCache<CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    struct TestMemoryScrubber_<'a, C, CL, CLD, const N: usize, const W: usize,
+        D, const S: usize>
     where
-        CL:     CachelineBase<CLD, D, S>,
-// FIXME: figure this out
-        CLD:    CachelineDataBase<D, S>,
-        D:      Num,
-    {
-        cache:      Cache<CL, CLD, N, W, D, S>,
-        _marker3:   PhantomData<D>,
-    }
-
-    impl<CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    TestCache<CL, CLD, N, W, D, S>
-    where
-        CL:     CachelineBase<CLD, D, S>,
-// FIXME: Figure this out
-        CLD:    CachelineDataBase<D, S>,
-        D: Num,
-    {
-        fn new() -> Self {
-            TestCache {
-                cache:      Cache::<CL, CLD, N, W, D, S>::new(),
-                _marker3:   PhantomData,
-            }
-        }
-    }
-
-/*
-    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    TestCacheBase<'a, CL, CLD, N, W, D, S>
-    for TestCache<CL, CLD, N, W, D, S>
-    where
-// FIXME: Figure this out
-        CL:     CachelineBase<CLD, D, S> + TestCachelineBase<CLD, D, S>,
-// FIXME: Figure this out
-        CLD:    CachelineDataBase<D, S> +
-            TestCachelineDataBase<D, S>,
-        D: Num + 'a,
-    {
-    }
-*/
-
-/*
-    impl<CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    CacheBase<CL, CLD, N, W, D, S>
-    for TestCache<CL, CLD, N, W, D, S>
-    where
-        CL:     CachelineBase<CLD, D, S>,
-// FIXME: Figure this out
-        CLD:    CachelineDataBase<D, S>,
-        D: Num,
-    {
-    }
-*/
-
-    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
-//    CacheBase<dyn TestCachelineBase<CLD, D, S> + 'a>
-    CacheBase<CL, CLD, N, W, D, S>
-    for TestCache<CL, CLD, N, W, D, S>
-    where
-        CL:     CachelineBase<CLD, D, S>,
-// FIXME: Figure this out
-        CLD:    CachelineDataBase<D, S>,
-        D: Num,
-    {
-        fn check_cache_params(&self) -> Result<(), Error> {
-            CacheBase::<CL, CLD, N, W, D, S>
-                ::check_cache_params(self)?;
-            Ok(())
-        }
-
-/*
-        fn cacheline_width(&self) -> usize {
-            CachelineBase::<D, S>
-                ::cacheline_width(self)
-        }
-
-        fn cacheline_size(&self) -> usize {
-            CachelineBase::<D, S>
-                ::cacheline_size(self)
-        }
-*/
-
-        fn cache_index_width(&self) -> usize {
-println!("TestCache::CacheBase1: cache_index_width: entered");
-            <dyn CacheBase::<CL, CLD, N, W, D, S>>
-                ::cache_index_width(self)
-        }
-
-        fn offset_to_next_index(&self, p: Addr, index: usize) -> usize {
-            CacheBase::<CL, CLD, N, W, D, S>
-                ::offset_to_next_index(self, p, index)
-        }
-
-/*
-        fn size_in_cachelines(&self, scrub_area: &MemArea) -> Addr {
-            CacheBase::<N, W, D, S>
-                ::size_in_cachelines(self, scrub_area)
-        }
-*/
-
-        fn cache_index(&self, p: Addr) -> usize {
-            CacheBase::<CL, CLD, N, W, D, S>
-                ::cache_index(self, p)
-        }
-
-        fn cache_lines(&self) -> usize {
-            CacheBase::<CL, CLD, N, W, D, S>
-                ::cache_lines(self)
-        }
-
-/*
-        fn read_cacheline(&self, p: Addr) {
-            CacheBase::<N, W, D, S>
-                ::read_cacheline(self, p)
-        }
-*/
-    }
-
-/* Looks like a duplicate
-    impl<CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    CacheBase<CL, CLD>
-    for TestCache<CL, CLD, N, W, D, S>
-    where
-        D: Num,
-    {
-        fn check_cache_params(&self) -> Result<(), Error> {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::check_cache_params(self)?;
-            Ok(())
-        }
-
-/*
-        fn cacheline_width(&self) -> usize {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::cacheline_width(self)
-        }
-
-        fn cacheline_size(&self) -> usize {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::cacheline_size(self)
-        }
-*/
-
-        fn cache_index_width(&self) -> usize {
-            <dyn CacheBase::<dyn TestCachelineBase<D, S>>>
-                ::cache_index_width(self)
-        }
-
-        fn offset_to_next_index(&self, p: Addr, index: usize) -> usize {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::offset_to_next_index(self, p, index)
-        }
-
-/*
-        fn size_in_cachelines(&self, scrub_area: &MemArea) -> Addr {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::size_in_cachelines(self, scrub_area)
-        }
-*/
-
-        fn cache_index(&self, p: Addr) -> usize {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::cache_index(self, p)
-        }
-
-        fn cache_lines(&self) -> usize {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::cache_lines(self)
-        }
-
-/*
-        fn read_cacheline(&self, p: Addr) {
-            CacheBase::<dyn TestCachelineBase<D, S>>
-                ::read_cacheline(self, p)
-        }
-*/
-    }
-*/
-
-/* Looks like a duplicate
-    impl<CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    CacheBase<CL, CLD>
-    for TestCache<CL, CLD, N, W, D, S>
-    where
-        D: Num,
-    {
-// FIXME: change xxx to Testxxx and check for similar issues elsewhere
-        fn check_cache_params(&self) -> Result<(), Error> {
-            <TestCacheline::<D, S> as CachelineBase>::check_cacheline_params()?;
-            value_to_width::<usize>(N)?;
-            Ok(())
-        }
-
-/*
-        fn cacheline_width(&self) -> usize {
-            <TestCacheline::<D, S> as CachelineBase>::cacheline_width()
-        }
-           
-        fn cacheline_size(&self) -> usize {
-            <TestCacheline::<D, S> as CachelineBase>::cacheline_size()
-        }
-*/
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Extract the cache index part of the address
-        fn cache_index_width(&self) -> usize where Self: Sized {
-println!("TestCache::CacheBase2: cache_index_width: entered");
-            <TestCache<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::cache_index_width(self)
-        }
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Computes the offset, in cache lines, of the next address at or higher
-        // than the given pointer for an address hitting the given cache index.
-        //
-        // p:       Address to start at
-        // index:   Cache index to search for
-        fn offset_to_next_index(&self, p: Addr, index: usize) -> usize {
-            <TestCache<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::offset_to_next_index(self, p, index)
-/*
-unimplemented!();
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            let start_index = self_cache_base.cache_index(p);
-            let cache_lines = self_cache_base.cache_lines();
-
-            // Compute the offset from the start of the self.scrub_area to the
-            // next highest address whose cache index is the one we are
-            // currently scrubbing. 
-            let result = if index >= start_index { index - start_index }
-            else { (index + cache_lines) - start_index };
-            result as usize
-*/
-        }
-
-/*
-        // NOTE: You are unlikely to ever need to implement this
-        // Return the size of a MemArea in cachelines
-        fn size_in_cachelines(&self, scrub_area: &MemArea) -> Addr {
-            <TestCache<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::size_in_cachelines(self, scrub_area)
-/*
-unimplemented!();
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            let start_in_cachelines =
-                scrub_area.start >> self_cache_base.cacheline_width();
-            // This will truncate the number of cache lines by one
-            let end_in_cachelines =
-                scrub_area.end >> self_cache_base.cacheline_width();
-            ((end_in_cachelines - start_in_cachelines) + 1) as Addr
-*/
-        }
-*/
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Extract the cache index part of the address
-        fn cache_index(&self, p: Addr) -> usize {
-            <TestCache<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::cache_index(self, p)
-/*
-unimplemented!();
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            (p as usize >> self_cache_base.cacheline_width()) &
-                ((1 << self_cache_base.cache_index_width()) - 1)
-*/
-        }
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Report the number of cache lines in the cache
-        fn cache_lines(&self) -> usize {
-            <TestCache<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::cache_lines(self)
-/*
-unimplemented!();
-            N
-*/
-        }
-
-/*
-        fn read_cacheline(&self, p: Addr) {
-            <TestCache<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::read_cacheline(self, p)
-/*
-unimplemented!();
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            self_cache_base.read_cacheline(p);
-*/
-        }
-*/
-    }
-
-    impl<CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    CacheBase<CL, CLD>
-    for TestCache<CL, CLD, N, W, D, S>
-    where
-        D: Num,
-    {
-        fn check_cache_params(&self) -> Result<(), Error> {
-            <TestCacheline::<D, S> as CachelineBase>::check_cacheline_params()?;
-            value_to_width::<usize>(N)?;
-            Ok(())
-        }
-
-/*
-        fn cacheline_width(&self) -> usize {
-            unimplemented!();
-            <TestCache::<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::cacheline_width(self)
-        }
-           
-        fn cacheline_size(&self) -> usize {
-            unimplemented!();
-            <TestCache::<N, W, D, S> as CacheBase<TestCacheline<D, S>>>
-                ::cacheline_width(self)
-        }
-*/
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Extract the cache index part of the address
-        fn cache_index_width(&self) -> usize where Self: Sized {
-println!("TestCache::CacheBase3: cache_index_width: entered");
-            value_to_width::<usize>(N).unwrap()
-        }
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Computes the offset, in cache lines, of the next address at or higher
-        // than the given pointer for an address hitting the given cache index.
-        //
-        // p:       Address to start at
-        // index:   Cache index to search for
-        fn offset_to_next_index(&self, p: Addr, index: usize) -> usize {
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            let start_index = self_cache_base.cache_index(p);
-            let cache_lines = self_cache_base.cache_lines();
-
-            // Compute the offset from the start of the self.scrub_area to the
-            // next highest address whose cache index is the one we are
-            // currently scrubbing. 
-            let result = if index >= start_index { index - start_index }
-            else { (index + cache_lines) - start_index };
-            result as usize
-        }
-
-/*
-        // NOTE: You are unlikely to ever need to implement this
-        // Return the size of a MemArea in cachelines
-        fn size_in_cachelines(&self, scrub_area: &MemArea) -> Addr {
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            let start_in_cachelines =
-                scrub_area.start >> self_cache_base.cacheline_width();
-            // This will truncate the number of cache lines by one
-            let end_in_cachelines =
-                scrub_area.end >> self_cache_base.cacheline_width();
-            ((end_in_cachelines - start_in_cachelines) + 1) as Addr
-        }
-*/
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Extract the cache index part of the address
-        fn cache_index(&self, p: Addr) -> usize {
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            (p as usize >> self_cache_base.cacheline_width()) &
-                ((1 << self_cache_base.cache_index_width()) - 1)
-        }
-
-        // NOTE: You are unlikely to ever need to implement this
-        // Report the number of cache lines in the cache
-        fn cache_lines(&self) -> usize {
-            N
-        }
-
-/*
-        fn read_cacheline(&self, p: Addr) {
-            let self_cache_base = self as &dyn CacheBase<TestCacheline<D, S>>;
-            self_cache_base.read_cacheline(p);
-        }
-*/
-    }
-*/
-
-    struct TestMemoryScrubber_<'a, C, CL, CLD, const N: usize, const W: usize, D,
-        const S: usize>
-    where
-        C:      TestCacheBase<'a, CL, CLD, N, W, D, S>,
-        CL:     TestCachelineBase<CLD, D, S>,
-// FIXME: Figure this out
+        C:      TestCacheBase_<'a, CL, CLD, N, W, D, S>,
+// Not sure why I have to add CachelineBase here
+        CL:     TestCachelineBase<D, S> + CachelineBase<CLD, D, S>,
         CLD:    TestCachelineDataBase<D, S>,
         D:      Num + 'a,
     {
-        cache:          TestCache<CL, CLD, N, W, D, S>,
+        cache:          C,
         my_scrub_areas: &'a [MemArea],
         _marker1:       PhantomData<C>,
-        _marker2:       PhantomData<D>,
+        _marker2:       PhantomData<CL>,
+        _marker3:       PhantomData<CLD>,
+        _marker4:       PhantomData<D>,
     }
 
     impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
     TestMemoryScrubber_<'a, C, CL, CLD, N, W, D, S>
     where
-        C:      TestCacheBase<'a, CL, CLD, N, W, D, S>,
-        CL:     TestCachelineBase<CLD, D, S>,
+        C:      TestCacheBase_<'a, CL, CLD, N, W, D, S>,
+// Not sure why I have to add CachelineBase here
+        CL:     TestCachelineBase<D, S> + CachelineBase<CLD, D, S>,
         CLD:    TestCachelineDataBase<D, S>,
         D:      Num + 'a,
     {
         fn new(scrub_areas: &'a [MemArea]) ->
             Result<TestMemoryScrubber_<C, CL, CLD, N, W, D, S>, Error> {
 // FIXME: figure how how to call check_scrubber_params()
-            let test_cache = TestCache::<CL, CLD, N, W, D, S>::new();
+//            let test_cache = TestCache::<CL, CLD, N, W, D, S>::new();
+            let test_cache = C::new();
             Ok(TestMemoryScrubber_::<C, CL, CLD, N, W, D, S> {
                 cache:          test_cache,
                 my_scrub_areas: scrub_areas,
                 _marker1:       PhantomData,
                 _marker2:       PhantomData,
+                _marker3:       PhantomData,
+                _marker4:       PhantomData,
             })
         }
     }
 
     impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    TestMemoryScrubberBase<'a, C, CL, CLD, N, W, D, S>
+    TestMemoryScrubberBase_<'a, C, CL, CLD, N, W, D, S>
     for TestMemoryScrubber_<'a, C, CL, CLD, N, W, D, S>
     where
-        C:      TestCacheBase<'a, CL, CLD, N, W, D, S>,
-        CL:     TestCachelineBase<CLD, D, S>,
+        C:      TestCacheBase_<'a, CL, CLD, N, W, D, S>,
+// Not sure why I have to add CachelineBase and TestCachelineBase_ here
+        CL:     TestCachelineBase<D, S> + CachelineBase<CLD, D, S> +
+                TestCachelineBase_<CLD, D, S>,
         CLD:    TestCachelineDataBase<D, S>,
         D:      Num + 'a,
     {
@@ -2388,14 +2095,15 @@ println!("TestCache::CacheBase3: cache_index_width: entered");
     MemoryScrubberBase<C, CL, CLD, N, W, D, S>
     for TestMemoryScrubber_<'a, C, CL, CLD, N, W, D, S>
     where
-        C:      TestCacheBase<'a, CL, CLD, N, W, D, S>,
-        CL:     TestCachelineBase<CLD, D, S>,
+        C:      TestCacheBase_<'a, CL, CLD, N, W, D, S>,
+// Not sure why I have to add CachelineBase here
+        CL:     TestCachelineBase<D, S> + CachelineBase<CLD, D, S>,
         CLD:    TestCachelineDataBase<D, S>,
         D:      Num + 'a,
     {
-        fn cache(&self) -> &CacheBase<CL, CLD, N, W, D, S> {
+        fn cache(&self) -> &C {
 println!("TestMemoryScrubber_:MemoryScrubberBase1: entered");
-            &self.cache
+            &self.cache as &C
         }
 
         fn scrub_areas(&self) -> &[MemArea] {
@@ -2423,19 +2131,18 @@ println!("TestMemoryScrubber_:MemoryScrubberBase2: entered");
     }
 */
 
-    trait Test<'a, const N: usize, const W: usize, D, const S: usize>
+    trait Test<'a, CLD, const N: usize, const W: usize, D, const S: usize>
     where
-        D: Num,
+        CLD:    TestCachelineDataBase<D, S>,
+        D:      Num,
     {
         fn test(&mut self,
-//            _cacheline_ptr: *const dyn TestCachelineBase<TestCachelineData<D, S>, D, S>) xxx
-//            _cacheline_ptr: dyn TestCachelineBase<TestCachelineData<D, S>, D, S>) xxx
-// FIXME: figure this out
-            _cacheline_ptr: *const u8)
+            _cacheline_ptr: *const CLD)
         {
             unimplemented!();
         }
     }
+/*
 
 /*
     #[derive(Debug)]
@@ -2602,62 +2309,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         D:      Num,
     {
     }
-
-trait TestMemoryScrubberBase<'a, C, CL, CLD, const N: usize, const W: usize, D,
-    const S: usize>: MemoryScrubberBase<C, CL, CLD, N, W, D, S>
-where
-    C:      TestCacheBase<'a, CL, CLD, N, W, D, S>,
-    CL:     TestCachelineBase<CLD, D, S>,
-    CLD:    TestCachelineDataBase<D, S>,
-    D:      Num + 'a,
-{
-    fn check_scrubber_params(cache: &C, scrub_areas: &[MemArea]) ->
-        Result<(), Error> where Self: Sized {
-println!("In TestMemoryScrubberBase");
-        <TestMemoryScrubber_<C, CL, CLD, N, W, D, S> as
-            MemoryScrubberBase<C, CL, CLD, N, W, D, S>>
-            ::check_scrubber_params(cache, scrub_areas)?;
-println!("In TestMemoryScrubberBase: no problem");
-            Ok(())
-    }
-}
-
-    struct TestMemoryScrubber_<'a, CD, CLD>
-    {
-        cache:          &'a C,
-        my_scrub_areas: &'a [MemArea],
-        scrubber:       TestMemoryScrubberBase<'a, C, CL, CLD>,
-    }
-
-    impl<'a, CD, const N: usize, D, const S: usize>
-    TestMemoryScrubber_<'a, N, D, S>
-    where
-        D: Num,
-    {
-        pub fn new(cache: &'a C, scrub_areas: &'a [MemArea]) -> 
-            Result<Self, Error> {
-
-            let cache = XTestCacheBase::<D, S>::new();
-
-            let scrubber_res = XTestMemoryScrubber_::<N, D, S>
-                ::new(&cache, scrub_areas);
-            let scrubber = match scrubber_res {
-                Err(e) => return Err(e),
-                Ok(scrubber) => scrubber,
-            };
-
-            let test_memory_scrubber = TestMemoryScrubber {
-                cache:          cache,
-                my_scrub_areas: scrub_areas,
-                scrubber:       scrubber,
-            };
-            Ok(test_memory_scrubber)
-        }
-            
-        pub fn scrub(&mut self, n: Addr) -> Result<(), Error> {
-            self.scrubber.scrub(n)
-        }
-    }
+*/
 
     // Description of memory that is read into by the read_cacheline()
     // function. This keeps the actual allocation together with the pointer
@@ -2746,7 +2398,6 @@ println!("Mem::new cacheline_size {}", cacheline_size);
             }
         }
     }
-/*
 
     // Cache characteristics
     // TEST_CACHE_INDEX_WIDTH - number of bits used as a cache line index
@@ -2754,7 +2405,6 @@ println!("Mem::new cacheline_size {}", cacheline_size);
     // TEST_CACHE_LINES - number of cache lines
 /* FIXME: restore this
     const TEST_CACHE_INDEX_WIDTH: usize = 10;
-*/
 */
     const TEST_CACHE_INDEX_WIDTH: usize = 2;
     const TEST_CACHE_LINES: usize = 1 << TEST_CACHE_INDEX_WIDTH;
@@ -2780,6 +2430,7 @@ println!("Mem::new cacheline_size {}", cacheline_size);
     type OkD = u32;
     const OK_S: usize = 8;
 
+/*
     #[test]
     fn test_unaligned_parameter_n() {
         const BAD_N: usize = OK_N - 1;
