@@ -1985,6 +1985,14 @@ mod tests {
     }
 
     impl<D, const S: usize>
+    CachelineDataBase<D, S>
+    for TestCachelineData<D, S>
+    where
+        D:      Num,
+    {
+    }
+
+    impl<D, const S: usize>
     Index<usize>
     for TestCachelineData<D, S>
     where
@@ -2441,12 +2449,12 @@ println!("Mem::new cacheline_size {}", cacheline_size);
     type OkD = u32;
     const OK_S: usize = 8;
 
-/*
     #[test]
     fn test_unaligned_parameter_n() {
         const BAD_N: usize = OK_N - 1;
         test_unaligned_parameter::<BAD_N, OK_W, OkD, OK_S>("N");
     }
+/*
 /*
 
     #[test]
@@ -2460,6 +2468,8 @@ println!("Mem::new cacheline_size {}", cacheline_size);
         const BAD_S: usize = OK_S - 1;
         test_unaligned_parameter::<OK_N, OK_W, OkD, BAD_S>("S");
     }
+*/
+*/
 
     fn test_unaligned_parameter<const N: usize, const W: usize, D,
         const S: usize>(param_name: &str)
@@ -2471,19 +2481,29 @@ println!("Mem::new cacheline_size {}", cacheline_size);
         const MEM_SIZE: VAddr = (3 * CACHE_SIZE) as VAddr;
 
         // Allocate a memory area using known good parameters
-        let mut mem = Mem::new::<TestCacheline<OkD, OK_S>>(MEM_SIZE);
+        let mut mem = Mem::new::<TestCacheline<OkD, OK_S>,
+            TestCachelineData<OkD,OK_S>, OkD, OK_S>(MEM_SIZE);
         let mut scrub_areas = Vec::<MemArea>::new();
         scrub_areas.push(mem.scrub_area);
 
         println!("Test params <{}, {}, {}, {}>",  N, W,
             std::mem::size_of::<D>(), S);
         let memory_scrubber =
-            TestMemoryScrubber_::<N, W, D, S>::new(&scrub_areas);
+            TestMemoryScrubber_::<TestCache<TestCacheline<OkD, OK_S>,
+                TestCachelineData<OkD, OK_S>, N, W, D, S>,
+                TestCacheline<OkD, OK_S>,
+                TestCachelineData<OkD, OK_S>, N, W, D, S>::new(&scrub_areas);
+/*
+        let mut mem = Mem::new::<TestCacheline<OkD, OK_S>,
+            TestCachelineData<OkD,OK_S>, OkD, OK_S>(MEM_SIZE);
+*/
         assert!(memory_scrubber.is_err());
         if let Err(e) = memory_scrubber {
             assert_eq!(e, Error::UnalignedValue);
         }
     }
+/*
+/*
 
     // Verify that an error is returned if the starting address is not
     // aligned on a cache line boundary
