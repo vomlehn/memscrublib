@@ -1,5 +1,6 @@
 #Memscrub
 
+## Introduction
 This is a cache-aware memory scrubber. Memory scrubbers walk through all
 memory protected by EDAC hardware. Any location that has been corrupted,
 say be a stray radiation particle, will trigger a fault. Whether the
@@ -28,3 +29,31 @@ contain information from the previous thread, which won't incur the
 performance hit of reloading all cache data it was using.
 
 See the source for more details on memory scrubbing.
+
+##Use
+Memscrub needs access to the RAM to be scrubbed. This will normally be
+all EDAC-protected RAM in the system, but Memscrub provides enough
+flexibility that, if it was useful, it could be run within the thread of
+a single process. In the case where it is scanning all RAM in a kernel
+that provides separate virtual memory addresses for processes, there are
+two approaches:
+
+| Approach | Description | Pros |
+| --- | --- | --- |
+| Kernel thread | Memscrub is part of the |* Has direct access to |
+| | kernel |  RAM |
+| | |
+| | | *Kernel can present |
+| | |  scrubbing interfaces in |
+| | |  a configuration |
+| | |  filesystem |
+| |
+| Privileged process | Memscrub is a process with |* Supporting userspace
+| | privledges allowing mapping |access to kernel memory |
+| | all RAM to a virual address |may present a security |
+| |risk |
+
+In both cases, Memscrub may need to change memory mappings in order to
+be able to read the whole memory. The operations to do this are
+system-specific but can be integrated with Memscrub in a straight forward
+fashion,
