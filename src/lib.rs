@@ -1780,7 +1780,6 @@ where
 {
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use num_traits::Num;
@@ -3330,6 +3329,8 @@ println!("test_aligned: scrub done");
             panic!("scrub failed: {}", e);
         };
 
+        unimplemented!();
+/*
         verify_scrub::<
             TestCache<
                 TestCacheline<OkD, OK_S>,
@@ -3340,6 +3341,7 @@ println!("test_aligned: scrub done");
             TestCachelineData<OkD, OK_S>,
                 OK_N, OK_W, OkD, OK_S
         >(&memory_scrubber, n);
+*/
 
         // Ensure that allocated_area is used
         unimplemented!();
@@ -3370,10 +3372,13 @@ println!("test_aligned: scrub done");
         {
             let cacheline_ptr: *const CLD;
 
+            unimplemented!();
+/*
             for read_info in &test_cache.test(cacheline_ptr).borrow_mut()
                 .read_infos {
                 scrub_areas.push(read_info.mem.scrub_area.clone());
             }
+*/
         }
 
         (test_cache, scrub_areas)
@@ -3404,15 +3409,21 @@ println!("test_aligned: scrub done");
         // Count the total number of scrub lines in all of the MemAreas
         let mut scrub_lines = 0;
 
+        unimplemented!();
+/*
         for scrub_area in scrubber.iterator.scrub_areas {
-            scrub_lines += scrubber.cache()::size_in_cachelines(scrub_area);
+            scrub_lines += C::size_in_cachelines(scrub_area);
         }
+*/
 
+        unimplemented!();
+/*
         let n_min_reads = match (n_in_cachelines / scrub_lines)
             .try_into() {
             Err(e) => panic!("Internal Error: n_min_reads conversion failed: {}", e),
             Ok(n_min_reads) => n_min_reads,
         };
+*/
         let n_extra_reads = n_in_cachelines % scrub_lines;
 
         let mut verified = 0;
@@ -3434,10 +3445,13 @@ println!("test_aligned: scrub done");
     fn verify_cache_index<C>(cache: &C,
         cache_index: usize, n_min_reads: usize, n_extra_reads: usize,
         verified: &mut usize) {
+/*
+unimplemskknted!();
         for read_info in cache.test.borrow_mut().read_infos {
             verify_read_info(cache, &read_info, cache_index,
                 n_min_reads, n_extra_reads, verified);
         }
+*/
     }
 
     // Verify that one scrub area is correct
@@ -3459,12 +3473,20 @@ println!("test_aligned: scrub done");
         D:      Num,
     {
         let cache_lines = cache.cache_lines();
+/*
         let size_in_cachelines =
             cache.size_in_cachelines(&read_info.mem.scrub_area);
+*/
+        let size_in_cachelines = 1;
+        unimplemented!();
 
         let start = read_info.mem.scrub_area.start;
+        unimplemented!();
+        let start_index = 0;
+/*
         let start_index =
             cache.offset_to_next_index(start, cache_index);
+*/
         let mem = unsafe {
             slice::from_raw_parts(start as *const CL, size_in_cachelines)
         };
@@ -3488,16 +3510,23 @@ println!("i {}", i);
                 .expect("Numerical conversion failed");
             assert_eq!(n_actual, n_expected);
 
+            unimplemented!();
+            let mem_actual = 0;
+/*
             let mem_actual = mem[i].data[0];
+*/
             let mem_expected =
                 if n_min_reads == 0 && *verified >= n_extra_reads { 0 }
                 else { TEST_COOKIE };
 
             assert_eq!(mem_actual, mem_expected);
+            unimplemented!();
+/*
             for data in &mem[i].data[1..] {
                 let mem_actual = *data;
                 assert_eq!(mem_actual, 0);
             }
+*/
 
             *verified += 1;
         }
@@ -3518,4 +3547,3 @@ println!("i {}", i);
         }
     }
 }
-*/
