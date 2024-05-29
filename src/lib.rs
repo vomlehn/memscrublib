@@ -784,8 +784,6 @@ where
         for p in iterator {
             CL::read_cacheline(p);
         }
-/* FIXME: uncomment this
-*/
 
         Ok(())
     }
@@ -1469,30 +1467,6 @@ where
     CLD:    CachelineDataBase<D, S>,
     D:      Num
 {
-/*
-    fn check_scrubber_params(cache: &dyn CacheBase<CL, CLD, N, W, D, S>,
-        _scrub_areas: &[MemArea]) -> Result<(), Error> {
-        // FIXME: Don't I need to check scrub_areas?
-        //<MemoryScrubber_<C, CL, N, W, D, S> as MemoryScrubberBase<C, CL, N, W, D, S>>
-        // Ambiguous: <dyn MemoryScrubberBase<C, CL, N, W, D, S>>
-        // Nah, "MemoryScrubberBase<C, CL, N, W, D, S>
-        // for Cache<N< W, D, S>" must be implemented.
-        // Size problems: <dyn MemoryScrubberBase<C, CL, N, W, D, S>
-        //    as MemoryScrubberBase<C, CL, N, W, D, S>>
-        // Recursive call:           Self::check_scrubber_params(cache, scrub_areas)?;
-        // FIXME: come back and figure this one out
-        // let c = cache as &dyn CacheBase<CL>;
-        //MemoryScrubberBase::check_scrubber_params(c)?;
-
-        // FIXME: restore this
-        CacheBase::check_cache_params(cache)?;
-
-        // FIXME: now check scrubber params
-        // TBD check_scrubber_params(cache, scrub_areas)
-
-        Ok(())
-    }
-*/
 }
 
 impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
@@ -1775,13 +1749,14 @@ mod tests {
     use std::marker::PhantomData;
 //    use std::ptr;
     use std::slice;
-//    use std::time::Instant;
+    use std::time::Instant;
 
     use crate::{
 //        AutoScrub,
 //        AutoScrubDesc,
 //        Cache_,
         CacheBase,
+        CacheIndexIterator,
 //        Cacheline,
         CachelineBase,
 //        CachelineData,
@@ -1790,9 +1765,11 @@ mod tests {
         Error,
         MemArea,
         MemAreaIterator,
+        MemAreasIterator,
 //        MemoryScrubber_,
         MemoryScrubberBase,
 //        MemoryScrubberType,
+        ScrubAreasIterator,
         VAddr,
         value_to_width
     };
@@ -1859,7 +1836,8 @@ mod tests {
 
     // Types for testing
     // =================
-    struct TestCache<CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    struct TestCache<CL, CLD, const N: usize, const W: usize, D,
+        const S: usize>
     where
 //        CL: TestCachelineBase<D, S> + ?Sized,
         CLD: TestCachelineDataBase<D, S>,
@@ -1874,6 +1852,7 @@ mod tests {
         _marker3:    PhantomData<D>,
     }
 
+// /*
     impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
     TestCache<CL, CLD, N, W, D, S>
     where
@@ -1892,7 +1871,7 @@ mod tests {
         D: Num,
     {
         fn test(&mut self, _cacheline_ptr: *const CLD) {
-            unimplemented!();
+panic!("TestCache::Test unimplemented");
         }
     }
 
@@ -1975,7 +1954,9 @@ mod tests {
             }
         }
     }
+// */
 
+    #[derive(Clone, Copy)]
     #[repr(C)]
     struct TestCachelineData<D, const S: usize>
     where
@@ -2174,6 +2155,34 @@ println!("TestMemoryScrubber_:MemoryScrubberBase1: entered");
         }
     }
 
+/*
+    impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    MemoryScrubberBase<C, CL, CLD, N, W, D, S>
+    for VerifyScrubber<'a, C, CL, CLD, N, W, D, S>
+    where
+        C:      TestCacheBase_<'a, CL, CLD, N, W, D, S>,
+// Not sure why I have to add CachelineBase here
+        CL:     TestCachelineBase<D, S> + CachelineBase<D, S>,
+        CLD:    TestCachelineDataBase<D, S>,
+        D:      Num + 'a,
+    {
+    }
+*/
+
+/*
+    trait VerifyScrubber<'a, CLD, const N: usize, const W: usize, D,
+        const S: usize>
+    where
+        CLD:    TestCachelineDataBase<D, S>,
+        D:      Num,
+    {
+        fn verify(&mut self) {
+            unimplemented!();
+        }
+    }
+*/
+
+// /*
     struct Tester<'a, CL, CLD, const N: usize, const W: usize, D,
         const S: usize>
     where
@@ -2321,6 +2330,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             write!(f, "{:?}", self)
         }
     }
+// */
 
     // Cache characteristics
     // BASIC_CACHELINE_WIDTH - number of bits required to index a byte in a
@@ -2725,18 +2735,33 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         const MEM_AREA_SIZE: usize = 1 * 1024 * 1024 * 1024;
 
         let cl: TestCachelineBase /* 32 */;
-        let mut basic_cache = BASIC_CACHE_DESC.clone();
-        let cache = &mut basic_cache;
-        let mem = Mem::new::<BasicCacheline>(MEM_AREA_SIZE);
+        //let mut basic_cache = BASIC_CACHE_DESC.clone();
+        //let cache = &mut basic_cache;
+        let cache = TestCache::<
+            TestCacheline<OkD, OK_S>,
+            TestCachelineData<OkD, OK_S>,
+             OK_N, OK_W, OkD, OK_S>::new();
+        let mem = Mem::new::<TestCacheline>(MEM_AREA_SIZE);
         let mut scrub_areas = Vec::<MemArea>::new();
         scrub_areas.push(mem.scrub_area);
-        let mut scrubber =
-            match MemoryScrubber_::<BasicCacheBase, BasicCacheline>::
-            new(cache, &scrub_areas) {
-            Err(e) => panic!("Could not create MemoryScrubber_: {}",
-                e),
-            Ok(scrubber) => scrubber,
-        };
+        let mut scrubber = TestMemoryScrubber_::<
+            TestCache<
+                TestCacheline<OkD, OK_S>,
+                TestCachelineData<OkD, OK_S>,
+                OK_N, OK_W, OkD, OK_S
+            >,
+            TestCacheline<OkD, OK_S>,
+            TestCachelineData<OkD, OK_S>,
+            OK_N, OK_W, OkD, OK_S
+        >::new(&scrub_areas).unwrap();
+
+//        let mut scrubber =
+//            match MemoryScrubber_::<TestCacheBase, TestCacheline>::
+//            new(cache, &scrub_areas) {
+//            Err(e) => panic!("Could not create MemoryScrubber_: {}",
+//                e),
+//            Ok(scrubber) => scrubber,
+//        };
 
         // Use the first scrub to page in all memory
         match scrubber.scrub(MEM_AREA_SIZE) {
@@ -2816,9 +2841,12 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         data: [D; S],
     }
  
-    impl<'a, D, S>
-    Cacheline<'a, D>
-    for IterCacheline {
+    impl<D, const S: usize>
+    TestCachelineBase<D, S>
+    for IterCacheline<D, S>
+    where
+        D: Num,
+    {
     }
 
     #[derive(Clone)]
@@ -2834,8 +2862,8 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         }
     }
 
-    impl<'a, CL, D, const S: usize>
-    CacheBase<'a, CL, D, S>
+    impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    CacheBase<CL, CLD, N, W, D, S>
     for IterCacheBase
     where
         CL: IterCacheline<'a, D, S>,
@@ -2843,7 +2871,9 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     {
     }
 
-    impl CacheBase for IterCacheBase {
+    impl<CL, CLD, const N: usize, const W: usize, D, const S: usize>
+    CacheBase<CL, CLD, N, W, D, S>
+    for IterCacheBase {
 /*
         fn cacheline_width(&self) -> usize {
             unimplemented!();
@@ -2945,7 +2975,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
 
     // Find the base and offset within the scrub areas
     fn breakdown(iter_cache: &IterCacheBase,
-        expected: *const IterCacheline, scrub_areas: &Vec::<MemArea>,
+        expected: *const IterCacheline<OkD, OK_S>, scrub_areas: &Vec::<MemArea>,
         b: &Vec::<usize>) -> (usize, usize) {
         let mut found: Option<usize> = None;
         for (j, scrub_area) in (0..scrub_areas.len()).into_iter()
@@ -3266,8 +3296,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             OK_N, OK_W, OkD, OK_S
         >(sizes);
 
-        let mut memory_scrubber = {
-            match TestMemoryScrubber_::<
+        let mut memory_scrubber = TestMemoryScrubber_::<
                 TestCache<
                     TestCacheline<OkD, OK_S>,
                     TestCachelineData<OkD, OK_S>,
@@ -3276,15 +3305,14 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
                 TestCacheline<OkD, OK_S>,
                 TestCachelineData<OkD, OK_S>,
                 OK_N, OK_W, OkD, OK_S
-            >::new(&scrub_areas) {
-                Err(e) => panic!("MemoryScrubber_::new() failed {}", e),
-                Ok(scrubber) => scrubber,
-            }
-        };
+            >::new(&scrub_areas).unwrap();
 
         if let Err(e) = memory_scrubber.scrub(n) {
             panic!("scrub failed: {}", e);
         };
+
+/*
+        memory_scrubber.verify();
 
         verify_scrub::<
             TestCache<
@@ -3296,12 +3324,21 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             TestCachelineData<OkD, OK_S>,
                 OK_N, OK_W, OkD, OK_S
         >(&memory_scrubber, n);
+//        let cacheline_ptr: * const CLD = memory_scrubber.cache().cacheline;
 
-        unimplemented!();
-/*
+        let test_cacheline_data = TestCachelineData::<OkD, OK_S>{
+            data: [0; OK_S]
+        };
+        let mut data: [TestCachelineData<OkD, OK_S>; 10] =
+            [test_cacheline_data; 10];
+        let cacheline_ptr: * const TestCachelineData<OkD, OK_S> =
+            data.as_ptr();
+        let read_infos = memory_scrubber.cache()
+            .test(cacheline_ptr);
+let x: u8 = read_infos;
+
         // Ensure that allocated_area is used
-        for read_info in
-            &memory_scrubber.cache().test().borrow_mut().read_infos {
+        for read_info in read_infos {
             let allocated_area = &read_info.mem.allocated_area;
             assert_eq!(allocated_area[0], allocated_area[0]);
         }
@@ -3401,7 +3438,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
         cache_index: usize, n_min_reads: usize, n_extra_reads: usize,
         verified: &mut usize) {
 /*
-unimplemskknted!();
+unimplemented!();
         for read_info in cache.test.borrow_mut().read_infos {
             verify_read_info(cache, &read_info, cache_index,
                 n_min_reads, n_extra_reads, verified);
