@@ -1862,6 +1862,7 @@ mod tests {
     {
     }
 
+/*
     impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
     Test<'a, CLD, N, W, D, S>
     for TestCache<CL, CLD, N, W, D, S>
@@ -1874,6 +1875,7 @@ mod tests {
 panic!("TestCache::Test unimplemented");
         }
     }
+*/
 
     impl<'a, CL, CLD, const N: usize, const W: usize, D, const S: usize>
     CacheBase<CL, CLD, N, W, D, S>
@@ -2143,22 +2145,9 @@ println!("TestMemoryScrubber_:MemoryScrubberBase1: entered");
         }
     }
 
-    trait Test<'a, CLD, const N: usize, const W: usize, D, const S: usize>
-    where
-        CLD:    TestCachelineDataBase<D, S>,
-        D:      Num,
-    {
-        fn test(&mut self,
-            _cacheline_ptr: *const CLD)
-        {
-            unimplemented!();
-        }
-    }
-
-/*
     impl<'a, C, CL, CLD, const N: usize, const W: usize, D, const S: usize>
-    MemoryScrubberBase<C, CL, CLD, N, W, D, S>
-    for VerifyScrubber<'a, C, CL, CLD, N, W, D, S>
+    VerifyScrubber
+    for TestMemoryScrubber_<'a, C, CL, CLD, N, W, D, S>
     where
         C:      TestCacheBase_<'a, CL, CLD, N, W, D, S>,
 // Not sure why I have to add CachelineBase here
@@ -2167,20 +2156,14 @@ println!("TestMemoryScrubber_:MemoryScrubberBase1: entered");
         D:      Num + 'a,
     {
     }
-*/
 
-/*
-    trait VerifyScrubber<'a, CLD, const N: usize, const W: usize, D,
-        const S: usize>
-    where
-        CLD:    TestCachelineDataBase<D, S>,
-        D:      Num,
+    trait VerifyScrubber
     {
-        fn verify(&mut self) {
+        fn verify(&mut self)
+        {
             unimplemented!();
         }
     }
-*/
 
 // /*
     struct Tester<'a, CL, CLD, const N: usize, const W: usize, D,
@@ -3285,6 +3268,7 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
     // sizes - array of sizes of memory areas to scrub
     // n - number of cache lines to scrub
     fn test_scrubber(sizes: &[usize], n: usize) {
+println!("In test_scrubber");
         let (test_cache, scrub_areas) = setup_test_desc_areas::<
             TestCache<
                 TestCacheline<OkD, OK_S>,
@@ -3311,8 +3295,8 @@ println!("n_reads[{}] became {}", index, n_reads[GUARD_LINES + index]);
             panic!("scrub failed: {}", e);
         };
 
-/*
         memory_scrubber.verify();
+/*
 
         verify_scrub::<
             TestCache<
