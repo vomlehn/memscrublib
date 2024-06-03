@@ -4,9 +4,7 @@ extern crate num_traits;
 
 use core::ops::{Add, AddAssign, Div, Mul, Rem, Shl, Shr, Sub, SubAssign};
 use core::num::ParseIntError;
-use num_traits::{Num, One, Zero, NumOps};
-//use std::cmp::Ordering;
-//use std::error::Error;
+use num_traits::{Num, One, Zero};
 use core::fmt;
 
 pub trait AddrBase<A>: Num
@@ -15,7 +13,7 @@ where
 {
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Addr<A>
 where
     A: Num,
@@ -27,9 +25,9 @@ impl<A> Addr<A>
 where
     A: Num,
 {
-    pub fn new(a: A) -> Addr<A> {
-        Addr::<A> {
-            a: a,
+    pub fn new<T: Num>(new_a: T) -> Addr<T> {
+        Addr::<T> {
+            a: new_a,
         }
     }
 }
@@ -40,6 +38,14 @@ where
     A: Num,
 {
 }
+
+/*
+pub fn assign_num<T: Num>(x: T) -> Addr<T> {
+    Addr::<T> {
+        a: x,
+    }
+}
+*/
 
 impl<A> Num
 for Addr<A>
@@ -206,53 +212,14 @@ where
     }
 }
 
-/*
-impl<A> PartialEq
-for Addr<A>
-where
-    A: Num,
-{
-    fn eq(&self, rhs: &Addr<A>) -> bool {
-        self.a == rhs.a
-    }
-}
-
-impl<A> PartialOrd
-for Addr<A>
-where
-    A: Num + PartialOrd,
-{
-    fn partial_cmp(&self, rhs: &Addr<A>) -> Option<Ordering> {
-        Some(if self.a > rhs.a { Ordering::Greater }
-            else if self.a < rhs.a { Ordering::Less }
-            else { Ordering::Equal })
-    }
-}
-
-/*
-impl<A> NumOps
-for Addr<A>
-{
-}
-*/
-
-impl<A: fmt::Debug> fmt::Debug
-for Addr<A>
-where
-    A: Num,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.a)
-    }
-}
-*/
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    type VAddr = Addr<u64>;
-    type PAddr = Addr<u128>;
-    
+    type BaseVType = u64;
+    type VAddr = Addr<BaseVType>;
+    type BasePType = u128;
+    type PAddr = Addr<BasePType>;
+
     #[test]
     fn test_create() {
         let x: Addr<u128> = Addr {a: 0};
@@ -261,6 +228,20 @@ mod tests {
         println!("y = {:?}", y);
         let z: VAddr = VAddr::new(2);
         println!("z = {:?}", z);
+        let a: usize = 12;
+        let b = VAddr::new(a as BaseVType);
+        println!("a {} b {}", a, b);
+        let l: usize = 17;
+        let m = VAddr::new(l);
+        println!("l {} m {}", l, m);
+    }
+
+    #[test]
+    fn test_assign() {
+        let x: u32 = 1;
+        let y = VAddr::new(x as u64);
+        println!("x {} y {}", x, y);
+        assert_eq!(x as u64, y.a);
     }
 
     #[test]
@@ -330,7 +311,14 @@ mod tests {
         print!("x(0x{:x}) >> y({}) = ", x, y);
         let z = x >> y;
         println!("z(0x{:x})", z);
-        assert_eq!(z, PAddr::new(5));
+        assert_eq!(z, PAddr::new((0x8 >> 1) | (0x2 >> 1) | (0x1 >> 0)));
+
+        let a = PAddr::new(0x5);
+        let b = PAddr::new(1);
+        println!("a ({}) << b ({}) = ", a, b);
+        let c = a << b;
+        print!("c ({})", c);
+        assert_eq!(c, PAddr::new(0xa));
     }
 
     #[test]
