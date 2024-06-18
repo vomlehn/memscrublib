@@ -9,7 +9,7 @@ use crate::addrimpl::*;
 extern crate num_traits;
 
 use core::ops::{Add, AddAssign, Div, Mul, Rem, Sub, SubAssign};
-//use core::ops::{BitAnd, Shl, Shr};
+use core::ops::{BitAnd, Shl, Shr};
 use core::num::ParseIntError;
 use core::fmt;
 use num_traits::{Num, One, Zero};
@@ -130,7 +130,7 @@ for Addr<A>
 impl<A> Num
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     type FromStrRadixErr = ParseIntError;
     fn from_str_radix(_: &str, _: u32)->Result<Self, <Self as Num>::FromStrRadixErr> {
@@ -151,10 +151,10 @@ where
 impl<A> fmt::LowerHex
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num + fmt::LowerHex,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:x}", self)
+        write!(f, "{:x}", self.a)
     }
 }
 
@@ -163,7 +163,7 @@ where
 impl<A: Zero> Zero
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     fn zero() -> Self {
         Addr::<A> {
@@ -178,7 +178,7 @@ where
 impl<A: One<Output = A>> One
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     fn one() -> Addr<A> {
         Addr::<A> {
@@ -195,7 +195,7 @@ where
 impl<A: Add<Output = A>> Add
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn add(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -207,7 +207,7 @@ where
 impl<A: AddAssign> AddAssign<Addr<A>>
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     fn add_assign(&mut self, rhs: Self) {
         self.a += rhs.a; // Use the AddAssign trait on the inner value (A)
@@ -217,7 +217,7 @@ where
 impl<A: Sub<Output = A>> Sub
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn sub(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -229,7 +229,7 @@ where
 impl<A: SubAssign> SubAssign<Addr<A>>
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     fn sub_assign(&mut self, rhs: Self) {
         self.a -= rhs.a; // Use the AddAssign trait on the inner value (A)
@@ -239,7 +239,7 @@ where
 impl<A: Mul<Output = A>> Mul
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn mul(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -251,7 +251,7 @@ where
 impl<A: Div<Output = A>> Div
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn div(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -263,7 +263,7 @@ where
 impl<A: Rem<Output = A>> Rem
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn rem(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -273,7 +273,6 @@ where
 }
 
 // Bitwise operations
-/*
 impl<A: BitAnd<Output = A>> BitAnd
 for Addr<A>
 where
@@ -289,7 +288,7 @@ where
 impl<A: Shl<Output = A>> Shl
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn shl(self, rhs: Addr<A>) -> Self::Output {
         Addr::<A>::new(self.a << rhs.a)
@@ -299,13 +298,12 @@ where
 impl<A: Shr<Output = A>> Shr
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn shr(self, rhs: Addr<A>) -> <Addr<A> as Shr>::Output {
         Addr::<A>::new(self.a >> rhs.a)
     }
 }
-*/
 
 #[cfg(test)]
 mod tests {
@@ -332,7 +330,6 @@ mod tests {
         println!("l {} m {}", l, m);
     }
 
-/*
     #[test]
     fn test_assign() {
         let x: u32 = 1;
@@ -402,6 +399,16 @@ mod tests {
     }
 
     #[test]
+    fn test_shl() {
+        let x: PAddr = Addr::<BasePType>::new(0x8 | 0x2 | 0x1);
+        let y: PAddr = PAddr::new(3);
+        print!("x(0x{:x}) << y({}) = ", x, y);
+        let z = x << y;
+        println!("z(0x{:x})", z);
+        assert_eq!(z, PAddr::new((0x8 << 3) | (0x2 << 3) | (0x1 << 3)));
+    }
+
+    #[test]
     fn test_shr() {
         let x: PAddr = PAddr::new(0x8 | 0x2 | 0x1);
         let y: PAddr = PAddr::new(1);
@@ -424,6 +431,7 @@ mod tests {
         println!("n (0x{:x})", n);
     }
 
+/*
     #[test]
     fn test_underlying_num() {
         type XAddr = Addr<u64>;
@@ -463,16 +471,6 @@ mod tests {
         let x4 = x0.s >> x3;
         println!("x4 ({:x})", x4);
         
-    }
-
-    #[test]
-    fn test_shl() {
-        let x: PAddr = Addr::<BasePType>::new(0x8 | 0x2 | 0x1);
-        let y: PAddr = PAddr::new(3);
-        print!("x(0x{:x}) << y({}) = ", x, y);
-        let z = x << y;
-        println!("z(0x{:x})", z);
-        assert_eq!(z, PAddr::new((0x8 << 3) | (0x2 << 3) | (0x1 << 3)));
     }
 */
 }
