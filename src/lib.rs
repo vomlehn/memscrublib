@@ -1,4 +1,3 @@
-/*
 // FIXME: replace panic!() will something else
 // FIXME: Invoke check_cache_params() in CacheBase.
 // FIXME: Convert Vec<ScrubArea> to [ScrubArea]
@@ -454,21 +453,19 @@
 extern crate lazy_static;
 extern crate num_traits;
 
-use num_traits::{Num, PrimInt};
+use num_traits::{Num};
 use std::fmt;
 use std::iter;
 use std::marker::PhantomData;
 use std::mem;
 use std::ptr;
 //use std::slice;
-*/
 
 mod tests;
 mod addr;
 
-/*
 use addr::Addr;
-use addr::AddrBase;
+//use addr::AddrBase;
 
 // Some basic definition
 
@@ -494,7 +491,7 @@ impl fmt::Display for Error {
 
 pub trait MemAreaBase<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     fn start(&self) -> Addr<A>;
     fn end(&self) -> Addr<A>;
@@ -506,11 +503,11 @@ where
 ///
 /// * end - address of the last byte of the area. Must be one less than a
 ///     multiple of the cache line size
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct MemArea<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     pub s: Addr<A>,
     pub e: Addr<A>,
@@ -518,7 +515,7 @@ where
 
 impl<A> MemArea<A>
 where
-    A: Num,
+    A: Num + Copy,
  {
     pub fn new(start: Addr::<A>, end: Addr::<A>) -> MemArea<A> {
         MemArea::<A> {
@@ -531,7 +528,7 @@ where
 impl<A> MemAreaBase<A>
 for MemArea<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     fn start(&self) -> Addr<A> {
         self.s
@@ -541,6 +538,7 @@ where
     }
 }
 
+/*
 /// Convert a number of items into the bit width of a value that will
 /// hold that number. The number must be a non-zero multiple of two.
 ///

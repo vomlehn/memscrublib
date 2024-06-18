@@ -21,14 +21,14 @@ use num_traits::{Num, One, Zero};
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     a: A,
 }
 
 impl<A> Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     pub fn new(new_a: A) -> Addr<A> {
         Addr::<A> {
@@ -43,7 +43,7 @@ where
 
 impl<A> From<usize> for Addr<A>
 where
-    A: Num + From<usize>,
+    A: Num + From<usize> + Copy,
 {
     fn from(value: usize) -> Self {
         Addr { a: value.into() } // Convert usize to A
@@ -52,7 +52,7 @@ where
 
 impl<A> From<u128> for Addr<A>
 where
-    A: Num + From<u128>,
+    A: Num + From<u128> + Copy,
 {
     fn from(value: u128) -> Self {
         Addr { a: value.into() } // Convert usize to A
@@ -61,7 +61,7 @@ where
 
 impl<A> From<u64> for Addr<A>
 where
-    A: Num + From<u64>,
+    A: Num + From<u64> + Copy,
 {
     fn from(value: u64) -> Self {
         Addr { a: value.into() } // Convert usize to A
@@ -70,7 +70,7 @@ where
 
 impl<A> From<u32> for Addr<A>
 where
-    A: Num + From<u32>,
+    A: Num + From<u32> + Copy,
 {
     fn from(value: u32) -> Self {
         Addr { a: value.into() } // Convert usize to A
@@ -83,7 +83,7 @@ where
 impl <A> Into<*mut u8>
 for Addr<A>
 where
-    A: Num + From<*mut u8>,
+    A: Num + From<*mut u8> + Copy,
     *mut u8: From<A>,
 {
     fn into(self) -> *mut u8 {
@@ -96,7 +96,7 @@ where
 impl<A> Num
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     type FromStrRadixErr = ParseIntError;
     fn from_str_radix(_: &str, _: u32)->Result<Self, <Self as Num>::FromStrRadixErr> {
@@ -107,7 +107,7 @@ where
 impl<A: fmt::Display + fmt::Debug> fmt::Display
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.a)
@@ -117,7 +117,7 @@ where
 impl<A> fmt::LowerHex
 for Addr<A>
 where
-    A: Num + fmt::LowerHex,
+    A: Num + fmt::LowerHex + Copy,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:x}", self.a)
@@ -129,7 +129,7 @@ where
 impl<A: Zero> Zero
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     fn zero() -> Self {
         Addr::<A> {
@@ -144,7 +144,7 @@ where
 impl<A: One<Output = A>> One
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     fn one() -> Addr<A> {
         Addr::<A> {
@@ -161,7 +161,7 @@ where
 impl<A: Add<Output = A>> Add
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn add(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -173,7 +173,7 @@ where
 impl<A: AddAssign> AddAssign<Addr<A>>
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     fn add_assign(&mut self, rhs: Self) {
         self.a += rhs.a; // Use the AddAssign trait on the inner value (A)
@@ -183,7 +183,7 @@ where
 impl<A: Sub<Output = A>> Sub
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn sub(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -195,7 +195,7 @@ where
 impl<A: SubAssign> SubAssign<Addr<A>>
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 {
     fn sub_assign(&mut self, rhs: Self) {
         self.a -= rhs.a; // Use the AddAssign trait on the inner value (A)
@@ -205,7 +205,7 @@ where
 impl<A: Mul<Output = A>> Mul
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn mul(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -217,7 +217,7 @@ where
 impl<A: Div<Output = A>> Div
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn div(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -229,7 +229,7 @@ where
 impl<A: Rem<Output = A>> Rem
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn rem(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -242,7 +242,7 @@ where
 impl<A: BitAnd<Output = A>> BitAnd
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn bitand(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -254,7 +254,7 @@ where
 impl<A: Shl<Output = A>> Shl
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn shl(self, rhs: Addr<A>) -> Self::Output {
         Addr::<A>::new(self.a << rhs.a)
@@ -264,7 +264,7 @@ where
 impl<A: Shr<Output = A>> Shr
 for Addr<A>
 where
-    A: Num,
+    A: Num + Copy,
 { type Output = Addr<A>;
     fn shr(self, rhs: Addr<A>) -> <Addr<A> as Shr>::Output {
         Addr::<A>::new(self.a >> rhs.a)
@@ -406,7 +406,7 @@ mod tests {
         #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
         struct MemArea<A>
         where
-            A: Num,
+            A: Num + Copy,
         {
             s: Addr<A>,
             e: Addr<A>,
@@ -414,7 +414,7 @@ mod tests {
 
         impl<A> MemArea<A>
         where
-            A: Num,
+            A: Num + Copy,
         {
             pub fn new(start: Addr::<A>, end: Addr::<A>) -> MemArea<A> {
                 MemArea::<A> {
