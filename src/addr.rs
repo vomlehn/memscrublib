@@ -4,8 +4,6 @@
 // A which also implements Num. This allows specifying an underlying integer
 // type to use for performing the operations.
 
-use crate::addrimpl::*;
-
 extern crate num_traits;
 
 use core::ops::{Add, AddAssign, Div, Mul, Rem, Sub, SubAssign};
@@ -13,10 +11,6 @@ use core::ops::{BitAnd, Shl, Shr};
 use core::num::ParseIntError;
 use core::fmt;
 use num_traits::{Num, One, Zero};
-/*
-use std::convert::{From};
-use std::cmp::{PartialOrd};
-*/
 
 // Type used for implementing generic address operations. It would be possible
 // for the implementation type to always be usize if we were always working
@@ -44,27 +38,6 @@ where
 
     // Rest of the existing implementation for Addr<A> methods...
 }
-
-/*
-impl<A> AddrTraits
-for Addr<A>
-where
-    A: AddrTraits,
-{
-}
-*/
-
-/*
-impl <A> Addr<A>
-    where A: AddrBase<A>,
-{
-}
-
-impl <A> Addr<A>
-    where A: AddrTraits,
-{
-}
-*/
 
 // Type conversion functions
 
@@ -117,13 +90,6 @@ where
         self.a.into()
     }
 }
-
-/*
-impl <A> AddrTraits
-for Addr<A>
-{
-}
-*/
 
 // Input and output functions
 
@@ -276,7 +242,7 @@ where
 impl<A: BitAnd<Output = A>> BitAnd
 for Addr<A>
 where
-    A: AddrTraits,
+    A: Num,
 { type Output = Addr<A>;
     fn bitand(self, rhs: Addr<A>) -> Self::Output {
         Addr {
@@ -431,7 +397,6 @@ mod tests {
         println!("n (0x{:x})", n);
     }
 
-/*
     #[test]
     fn test_underlying_num() {
         type XAddr = Addr<u64>;
@@ -441,7 +406,7 @@ mod tests {
         #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
         struct MemArea<A>
         where
-            A: AddrTraits,
+            A: Num,
         {
             s: Addr<A>,
             e: Addr<A>,
@@ -449,7 +414,7 @@ mod tests {
 
         impl<A> MemArea<A>
         where
-            A: AddrTraits,
+            A: Num,
         {
             pub fn new(start: Addr::<A>, end: Addr::<A>) -> MemArea<A> {
                 MemArea::<A> {
@@ -472,5 +437,4 @@ mod tests {
         println!("x4 ({:x})", x4);
         
     }
-*/
 }

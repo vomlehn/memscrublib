@@ -465,12 +465,10 @@ use std::ptr;
 
 mod tests;
 mod addr;
-mod addrimpl;
 
 /*
 use addr::Addr;
 use addr::AddrBase;
-use addr::AddrTraits;
 
 // Some basic definition
 
@@ -496,7 +494,7 @@ impl fmt::Display for Error {
 
 pub trait MemAreaBase<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     fn start(&self) -> Addr<A>;
     fn end(&self) -> Addr<A>;
@@ -512,7 +510,7 @@ where
 #[repr(C)]
 pub struct MemArea<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     pub s: Addr<A>,
     pub e: Addr<A>,
@@ -520,7 +518,7 @@ where
 
 impl<A> MemArea<A>
 where
-    A: AddrTraits,
+    A: Num,
  {
     pub fn new(start: Addr::<A>, end: Addr::<A>) -> MemArea<A> {
         MemArea::<A> {
@@ -533,7 +531,7 @@ where
 impl<A> MemAreaBase<A>
 for MemArea<A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     fn start(&self) -> Addr<A> {
         self.s
@@ -630,7 +628,7 @@ where
 pub trait CachelineBase<D, const S: usize, A>
 where
     D: Num,
-    A: AddrTraits + AddrBase<A>,
+    A: Num + AddrBase<A>,
 {
     // Check cache line related parameters.
     //
@@ -1453,7 +1451,7 @@ where
 impl<D, const S: usize, A> CachelineBase<D, S, A> for Cacheline<D, S>
 where
     D: Num,
-    A: AddrTraits + AddrBase<A>,
+    A: Num + AddrBase<A>,
 {
 }
 
@@ -1465,7 +1463,7 @@ pub struct Cache<
     A,
 > where
     D: Num,
-    A: AddrTraits + AddrBase<A>,
+    A: Num + AddrBase<A>,
 {
     cacheline: Cacheline<D, S>,
     _marker1: PhantomData<D>,
@@ -1780,7 +1778,7 @@ pub extern "C" fn autoscrub<'a, const N: usize, CLD>(c_cache: &'a mut CCacheBase
 
 pub trait AutoScrubDesc<CL, A>
 where
-    A: AddrTraits,
+    A: Num,
 {
     fn next(&mut self) -> Addr<A>;
 }
