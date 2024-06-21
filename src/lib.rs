@@ -453,7 +453,8 @@
 extern crate lazy_static;
 extern crate num_traits;
 
-use num_traits::{Num};
+use core::ops::{Shr, Shl};
+use num_traits::{Unsigned, PrimInt};
 use std::fmt;
 use std::iter;
 use std::marker::PhantomData;
@@ -465,7 +466,6 @@ mod tests;
 mod addr;
 
 use addr::Addr;
-//use addr::AddrBase;
 
 // Some basic definition
 
@@ -491,7 +491,7 @@ impl fmt::Display for Error {
 
 pub trait MemAreaBase<A>
 where
-    A: Num + Copy,
+    A: Unsigned + Copy + Shl + Shr,
 {
     fn start(&self) -> Addr<A>;
     fn end(&self) -> Addr<A>;
@@ -507,7 +507,7 @@ where
 #[repr(C)]
 pub struct MemArea<A>
 where
-    A: Num + Copy,
+    A: Unsigned + Copy + Shl + Shr,
 {
     pub s: Addr<A>,
     pub e: Addr<A>,
@@ -515,7 +515,7 @@ where
 
 impl<A> MemArea<A>
 where
-    A: Num + Copy,
+    A: Unsigned + Copy + Shl + Shr,
  {
     pub fn new(start: Addr::<A>, end: Addr::<A>) -> MemArea<A> {
         MemArea::<A> {
@@ -528,7 +528,7 @@ where
 impl<A> MemAreaBase<A>
 for MemArea<A>
 where
-    A: Num + Copy,
+    A: Unsigned + Copy + Shl + Shr,
 {
     fn start(&self) -> Addr<A> {
         self.s
@@ -538,7 +538,6 @@ where
     }
 }
 
-/*
 /// Convert a number of items into the bit width of a value that will
 /// hold that number. The number must be a non-zero multiple of two.
 ///
@@ -619,14 +618,15 @@ fn value_to_width<T: PrimInt + std::fmt::Debug>(
 
 pub trait CachelineDataBase<D, const S: usize>
 where
-    D: Num,
+    D: Unsigned,
 {
 }
 
 pub trait CachelineBase<D, const S: usize, A>
 where
-    D: Num,
-    A: Num + AddrBase<A>,
+    D: Unsigned,
+    A: Unsigned + Copy + From<usize> + Shr + Shl + From<Addr<A>> + fmt::Display + fmt::Debug,
+    *mut u8: From<A>,
 {
     // Check cache line related parameters.
     //
@@ -642,7 +642,6 @@ where
 
     // Return the number of bits required to hold the index into the cache
     // line
-    // FIXME: should probably return usize
     fn cacheline_width() -> usize {
         value_to_width::<usize>(std::mem::size_of::<D>() * S).unwrap()
     }
@@ -659,12 +658,23 @@ where
     fn size_in_cachelines<M: MemAreaBase<A>>(scrub_area: &M) -> Addr<A>
     where
         Self: Sized,
-        A: Num + Copy,
+//        A: Unsigned + Copy + Shr,
     {
         let cacheline_width: Addr<A> = Self::cacheline_width().into();
-        let start_in_cachelines = scrub_area.start() >> cacheline_width;
+
+        let start = scrub_area.start();
+        let start_in_cachelines = start >> cacheline_width;
+
+let x = Addr::<u128>::new(32);
+let y = Addr::<u128>::new(4);
+println!("x({}) + y({}) = {}", x, y, x + y);
+println!("x({}) >> y({}) = {}", x, y, x >> y);
+println!("x({}) >> y({}) = {}", start, cacheline_width, start >> cacheline_width);
+
         // This will truncate the number of cache lines by one
-        let end_in_cachelines = scrub_area.end() >> cacheline_width;
+        let end = scrub_area.end();
+        let end_in_cachelines = end >> cacheline_width;
+
         (end_in_cachelines - start_in_cachelines) + 1
     }
 
@@ -687,6 +697,7 @@ where
     }
 }
 
+/*
 // FIXME: is there any way to drop the CL parameter and define it in terms
 // of N, W, D, and S?
 pub trait CacheBase<
@@ -696,7 +707,7 @@ pub trait CacheBase<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     // Report on whether any parameter problems are detected
@@ -781,7 +792,7 @@ pub trait MemoryScrubberBase<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     fn cache(&self) -> &Cache<N, W, D, S, A>;
@@ -888,7 +899,7 @@ pub struct ScrubCountIterator<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     cache: &'a Cache<N, W, D, S, A>,
@@ -908,7 +919,7 @@ impl<
         A,
     > ScrubCountIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     pub fn new(
@@ -939,7 +950,7 @@ impl<
         A,
     > iter::Iterator for ScrubCountIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     type Item = Addr<A>;
@@ -975,7 +986,7 @@ pub struct ScrubAreasIterator<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     cache: &'a Cache<N, W, D, S, A>,
@@ -993,7 +1004,7 @@ impl<
         A,
     > ScrubAreasIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     pub fn new(
@@ -1025,7 +1036,7 @@ impl<
         A,
     > iter::Iterator for ScrubAreasIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     type Item = Addr<A>;
@@ -1076,7 +1087,7 @@ pub struct CacheIndexIterator<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>
 {
     cache: &'a Cache<N, W, D, S, A>,
@@ -1096,7 +1107,7 @@ impl<
         A,
     > CacheIndexIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     pub fn new(
@@ -1130,7 +1141,7 @@ impl<
         A,
     > iter::Iterator for CacheIndexIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     type Item = Addr<A>;
@@ -1183,7 +1194,7 @@ pub struct MemAreasIterator<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     cache: &'a Cache<N, W, D, S, A>,
@@ -1203,7 +1214,7 @@ impl<
         A,
     > MemAreasIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     pub fn new(
@@ -1243,7 +1254,7 @@ impl<
         A,
     > iter::Iterator for MemAreasIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     type Item = Addr<A>;
@@ -1298,7 +1309,7 @@ pub struct MemAreaIterator<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     cache: &'a Cache<N, W, D, S, A>,
@@ -1317,7 +1328,7 @@ impl<
         A,
     > MemAreaIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     // Create a new MemAreaIterator.
@@ -1357,7 +1368,7 @@ impl<
         A,
     > iter::Iterator for MemAreaIterator<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     // FIXME: Need to supply an address type as a generic parameter, not assume Addr<A>
@@ -1401,7 +1412,7 @@ where
 #[repr(C)]
 pub struct CachelineData<D, const S: usize>
 where
-    D: Num,
+    D: Unsigned,
 {
     // The actual cache line data as an array of S items of type D.
     // FIXME: This is an inconsistency in Rust. S should be capable of being
@@ -1411,20 +1422,20 @@ where
 }
 
 impl<D, const S: usize> CachelineDataBase<D, S> for CachelineData<D, S> where
-    D: Num
+    D: Unsigned,
 {
 }
 
 pub struct Cacheline<D, const S: usize>
 where
-    D: Num,
+    D: Unsigned,
 {
     _marker2: PhantomData<D>,
 }
 
 impl<D, const S: usize> Cacheline<D, S>
 where
-    D: Num,
+    D: Unsigned,
 {
     /*
         // FIXME: I don't know why these need to be implemented here. Shouldn't they
@@ -1448,8 +1459,8 @@ where
 
 impl<D, const S: usize, A> CachelineBase<D, S, A> for Cacheline<D, S>
 where
-    D: Num,
-    A: Num + AddrBase<A>,
+    D: Unsigned,
+    A: Unsigned + AddrBase<A>,
 {
 }
 
@@ -1460,8 +1471,8 @@ pub struct Cache<
     const S: usize,
     A,
 > where
-    D: Num,
-    A: Num + AddrBase<A>,
+    D: Unsigned,
+    A: Unsigned + AddrBase<A>,
 {
     cacheline: Cacheline<D, S>,
     _marker1: PhantomData<D>,
@@ -1471,7 +1482,7 @@ pub struct Cache<
 impl<'a, const N: usize, const W: usize, D, const S: usize, A>
     Cache<N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     /*
@@ -1507,7 +1518,7 @@ where
 impl<const N: usize, const W: usize, D, const S: usize, A>
     CacheBase<N, W, D, S, A> for Cache<N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     /*
@@ -1577,7 +1588,7 @@ pub struct MemoryScrubber<
     const S: usize,
     A,
 > where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
     my_cache: &'a Cache<N, W, D, S, A>,
@@ -1594,7 +1605,7 @@ impl<
         A,
     > MemoryScrubber<'a, N, W, D, S, A>
 where
-    D: Num,
+    D: Unsigned,
     A: AddrBase<A>,
 {
 }
@@ -1609,7 +1620,7 @@ impl<
     > MemoryScrubberBase<N, W, D, S, A>
     for MemoryScrubber<'a, N, W, D, S, A>
 where
-    D: Num + 'a,
+    D: Unsigned + 'a,
     A: AddrBase<A>,
 {
     fn cache(&self) -> &Cache<N, W, D, S, A> {
@@ -1776,7 +1787,7 @@ pub extern "C" fn autoscrub<'a, const N: usize, CLD>(c_cache: &'a mut CCacheBase
 
 pub trait AutoScrubDesc<CL, A>
 where
-    A: Num,
+    A: Unsigned,
 {
     fn next(&mut self) -> Addr<A>;
 }
@@ -1785,7 +1796,7 @@ where
 struct AutoScrub<'a, const N: usize, const W: usize, D,
     const S: usize>
 where
-    D:      Num,
+    D:      Unsigned,
 {
     scrubber:   MemoryScrubber<'a, N, W, D, S>,
     desc:       &'a mut dyn AutoScrubDesc<CL>,
@@ -1795,7 +1806,7 @@ where
     _marker1:    PhantomData<D>,
 }
 
-impl<'a, const N: usize, const W: usize, D: Num, const S: usize>
+impl<'a, const N: usize, const W: usize, D: Unsigned, const S: usize>
 AutoScrub<'a, N, W, D, S>
 where
 {
@@ -1836,14 +1847,14 @@ where
 */
 }
 
-impl<'a, const N: usize, const W: usize, D: Num, const S: usize>
+impl<'a, const N: usize, const W: usize, D: Unsigned, const S: usize>
 CachelineBase<D, S, A>
 for AutoScrub<'a, N, W, D, S>
 where
 {
 }
 
-impl<'a, const N: usize, const W: usize, D: Num, const S: usize>
+impl<'a, const N: usize, const W: usize, D: Unsigned, const S: usize>
 CacheBase<N, W, D, S>
 for AutoScrub<'a, N, W, D, S>
 where
