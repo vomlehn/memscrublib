@@ -1,4 +1,3 @@
-/*
 #[cfg(test)]
 mod tests {
     use num_traits::Num;
@@ -838,6 +837,7 @@ mod tests {
     type OkD = u32;
     const OK_S: usize = 8;
 
+/*
     // Verify that the number of cache lines is a power of two
     #[test]
     fn test_unaligned_parameters() {
@@ -1994,5 +1994,5 @@ mod tests {
             assert_eq!(actual, 0);
         }
     }
-}
 */
+}

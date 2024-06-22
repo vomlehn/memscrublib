@@ -1,3 +1,4 @@
+/*
 // FIXME: replace panic!() will something else
 // FIXME: Invoke check_cache_params() in CacheBase.
 // FIXME: Convert Vec<ScrubArea> to [ScrubArea]
@@ -448,24 +449,25 @@
 // NOTE: The above assumes that, once a bit is flipped, it stays flipped. The
 // probability of a bit being inverted, then inverted again is small enough
 // that it can be ignored.
+*/
 
 //#[macro_use]
 extern crate lazy_static;
 extern crate num_traits;
 
-use core::ops::{Shr, Shl};
-use num_traits::{Unsigned, PrimInt};
-use std::fmt;
-use std::iter;
-use std::marker::PhantomData;
-use std::mem;
-use std::ptr;
+//use core::ops::{Shr, Shl};
+//use num_traits::{Unsigned};
+use core::fmt;
+//use std::iter;
+//use std::marker::PhantomData;
+//use std::mem;
+//use std::ptr;
 //use std::slice;
 
-mod tests;
+//mod tests;
 mod addr;
 
-use addr::Addr;
+use addr::{Addr};
 
 // Some basic definition
 
@@ -491,12 +493,13 @@ impl fmt::Display for Error {
 
 pub trait MemAreaBase<A>
 where
-    A: Unsigned + Copy + Shl + Shr,
+//    A: Unsigned + Copy + Shl + Shr,
 {
     fn start(&self) -> Addr<A>;
     fn end(&self) -> Addr<A>;
 }
 
+/*
 /// Structure used to define an area to be scrubbed
 /// * `start` - lowest virtual address of the area. Must be a multiple of the
 ///     cache line size
@@ -1860,5 +1863,6 @@ for AutoScrub<'a, N, W, D, S>
 where
 {
 }
+*/
 */
 */
