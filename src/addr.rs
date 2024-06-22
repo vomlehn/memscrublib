@@ -67,7 +67,7 @@ where
 
 impl<A> From<usize> for Addr<A>
 where
-    A: AddrImplTrait<A> + From<usize>,
+    A: Unsigned + From<usize>,
 {
     fn from(value: usize) -> Self {
         Addr { addr: value.into() } // Convert usize to Addr
@@ -76,7 +76,7 @@ where
 
 impl<A> From<u128> for Addr<A>
 where
-    A: AddrImplTrait<A> + From<u128>,
+    A: Unsigned + From<u128>,
 {
     fn from(value: u128) -> Self {
         Addr { addr: value.into() } // Convert u128 to Addr
@@ -85,7 +85,7 @@ where
 
 impl<A> From<u64> for Addr<A>
 where
-    A: AddrImplTrait<A> + From<u64>,
+    A: Unsigned + From<u64>,
 {
     fn from(value: u64) -> Self {
         Addr { addr: value.into() } // Convert u64 to Addr
@@ -94,7 +94,7 @@ where
 
 impl<A> From<u32> for Addr<A>
 where
-    A: AddrImplTrait<A>,
+    A: Unsigned + From<u32>,
 {
     fn from(value: u32) -> Self {
         Addr { addr: value.into() } // Convert u32 to Addr
