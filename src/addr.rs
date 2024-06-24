@@ -11,15 +11,33 @@ use core::ops::{BitAnd, Shr, Shl};
 use num_traits::{Num, One, Unsigned, Zero};
 use std::convert::From;
 
-pub trait AddrImplTrait<A>: Unsigned + Copy +
+pub trait AddrImplTrait<A>: 
+    Unsigned + Copy + 
+    Shl<Output = A> + Shr<Output = A> + BitAnd<Output = A> +
+    AddAssign + SubAssign +
+    PartialOrd +
+    From<Addr<A>> + From<usize> +
+    fmt::Display
+{
+}
+
+// FIXME: rename ECCDataTrait?
+pub trait DataImplTrait<D>:
+    Unsigned + Copy + Into<*mut D>
+{
+}
+
+/*
+Unsigned + Copy +
     From<usize> + From<u128> + From<u64> + From<u32> +
     Shl<Output = A> + Shr<Output = A> +
     fmt::Display {
 }
+*/
 
 // Addr definitions
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct Addr<A>
 {
     addr:   A,
@@ -27,23 +45,23 @@ pub struct Addr<A>
 
 impl<A> Addr<A>
 where
-    A: Unsigned + Copy + fmt::Display,
+    A: Unsigned + Copy,
 {
     pub fn new(addr: A) -> Self {
         Addr::<A> {
             addr: addr,
         }
     }
-}
 
 /*
-impl<A> AddrTrait<A>
-for Addr<A>
-where
-    A: AddrImplTrait<A>,
-{
-}
+    // FIXME: If <A> is a physical address, we can implement mapping for the
+    // physical address to the virtual address here, though I'm not really
+    // sure this is the right place to do this.
+    pub fn to_ptr<D>(self) -> *mut D {
+        self.addr.into()
+    }
 */
+}
 
 impl<A> fmt::Display
 for Addr<A>
@@ -62,6 +80,25 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:x}", self.addr)
+    }
+}
+
+impl<A, D> Into<*mut D>
+for Addr<A>
+where *mut D: From<A>
+{
+    fn into(self) -> *mut D {
+        self.addr.into()
+    }
+}
+
+impl<A> From<Addr<A>> for usize
+where
+    A: Unsigned,
+    usize: From<A>,
+{
+    fn from(value: Addr<A>) -> Self {
+        value.addr.into()
     }
 }
 
@@ -101,35 +138,19 @@ where
     }
 }
 
-// FIXME: If <A> is a physical address, we can implement mapping for the physical
-// address to the virtual address here, though I'm not really sure this is the
-// right place to do this.
-// FIXME: use Ptr
-impl <A> From<Addr<A>>
-for *mut u8
-where
-    A: AddrImplTrait<A>,
-    *mut u8: From<A>,
-{
-    fn from(value: Addr<A>) -> Self {
-        value.addr.into()
-//        value.a as *mut u8
-    }
-}
-
 // From num_traits
 
 impl<A> Unsigned
 for Addr<A>
 where
-    A: AddrImplTrait<A>,
+    A: Unsigned + Copy,
 {
 }
 
 impl<A> Num
 for Addr<A>
 where
-    A: AddrImplTrait<A>,
+    A: Unsigned + Copy,
 {
     type FromStrRadixErr = ParseIntError;
     fn from_str_radix(_: &str, _: u32)->Result<Self, Self::FromStrRadixErr> {
@@ -141,7 +162,7 @@ where
 impl<A> One
 for Addr<A>
 where
-    A: AddrImplTrait<A>,
+    A: Unsigned + Copy,
 {
     fn one() -> Self::Output {
         Addr::<A> {
@@ -153,7 +174,7 @@ where
 impl<A> Zero
 for Addr<A>
 where
-    A: AddrImplTrait<A>,
+    A: Unsigned + Copy,
 {
     fn zero() -> Self::Output {
         Addr::<A> {
@@ -223,7 +244,7 @@ where
 impl<A> Rem
 for Addr<A>
 where
-    A: AddrImplTrait<A>,
+    A: Unsigned + Copy,
 {
     type Output = Addr<A>;
 
@@ -263,7 +284,7 @@ where
 impl<A> BitAnd
 for Addr<A>
 where
-    A: AddrImplTrait<A> + BitAnd<Output = A>
+    A: Unsigned + Copy + BitAnd<Output = A>
 {
     type Output = Addr<A>;
 
@@ -281,7 +302,7 @@ where
 {
     type Output = Addr<A>;
 
-    fn shl(self, rhs: Addr<A>) -> Addr<A> {
+    fn shl(self, rhs: Addr<A>) -> Self::Output {
         let l: A = self.addr;
         let r: A = rhs.addr;
         Addr::<A> {
@@ -297,7 +318,7 @@ where
 {
     type Output = Addr<A>;
 
-    fn shr(self, rhs: Addr<A>) -> Addr<A> {
+    fn shr(self, rhs: Addr<A>) -> Self::Output {
         let l: A = self.addr;
         let r: A = rhs.addr;
         Addr::<A> {
@@ -435,7 +456,6 @@ mod tests {
         println!("n (0x{:x})", n);
     }
 
-/*
     #[test]
     fn test_underlying_num() {
         type XAddr = Addr<u64>;
@@ -476,5 +496,4 @@ mod tests {
         println!("x4 ({:x})", x4);
         
     }
-*/
 }

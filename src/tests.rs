@@ -1,3 +1,5 @@
+/*
+FIXME: remove this file
 #[cfg(test)]
 mod tests {
     use num_traits::Num;
@@ -1996,3 +1998,4 @@ mod tests {
     }
 */
 }
+*/
