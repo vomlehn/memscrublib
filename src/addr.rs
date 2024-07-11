@@ -12,7 +12,7 @@ use num_traits::{Num, One, Unsigned, Zero};
 use std::convert::From;
 
 pub trait AddrImplTrait<A>: 
-    Unsigned + Copy + 
+    Unsigned + Copy + Clone +
     Shl<Output = A> + Shr<Output = A> + BitAnd<Output = A> +
     AddAssign + SubAssign +
     PartialOrd +
@@ -23,24 +23,17 @@ pub trait AddrImplTrait<A>:
 
 // FIXME: rename ECCDataTrait?
 pub trait DataImplTrait<D>:
-    Unsigned + Copy + Into<*mut D>
+    Unsigned + Copy + Into<*mut D> +
+    fmt::Debug
 {
 }
-
-/*
-Unsigned + Copy +
-    From<usize> + From<u128> + From<u64> + From<u32> +
-    Shl<Output = A> + Shr<Output = A> +
-    fmt::Display {
-}
-*/
 
 // Addr definitions
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub struct Addr<A>
 {
-    addr:   A,
+    pub addr:   A,
 }
 
 impl<A> Addr<A>
@@ -137,6 +130,53 @@ where
         Addr { addr: value.into() } // Convert u32 to Addr
     }
 }
+
+/*
+impl From<usize>
+for *mut usize
+{
+}
+
+impl DataImplTrait<usize>
+for usize
+{
+}
+
+impl DataImplTrait<u128>
+for u128
+{
+}
+
+impl DataImplTrait<u64>
+for u64
+{
+}
+
+impl DataImplTrait<u32>
+for u32
+{
+}
+
+impl Into<*mut u32>
+for u32
+{
+    fn into(self) -> *mut u32 {
+        self.into()
+    }
+}
+*/
+
+/*
+impl<D> From<DataImplTrait<D>> for u32
+where
+    D: Unsigned,
+    usize: From<D>,
+{
+    fn from(value: Addr<D>) -> Self {
+        value.addr.into()
+    }
+}
+*/
 
 // From num_traits
 
