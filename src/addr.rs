@@ -50,6 +50,7 @@ where
     }
 }
 
+/*
 impl<A, D> Into<*mut D> for Addr<A>
 where
     *mut D: From<A>,
@@ -58,6 +59,7 @@ where
         self.0.into()
     }
 }
+*/
 
 impl<A> From<Addr<A>> for usize
 where
@@ -104,6 +106,35 @@ where
         Addr(value.into()) // Convert u32 to Addr
     }
 }
+
+impl<A, D> From<Addr<A>>
+for *mut D
+where
+    A: Unsigned + From<Addr<A>>,
+{
+    fn from(value: Addr<A>) -> Self {
+        value.into()
+    }
+}
+
+/*
+impl <A> From<A> for usize
+where A: Unsigned + From<usize>
+{
+    fn from(value: A) -> Self {
+        value.into()
+    }
+}
+
+impl<A> Into<usize> for A
+where
+    A: Unsigned + Into<usize>,
+{
+    fn into(self) -> Self {
+        self.into()
+    }
+}
+*/
 
 // From num_traits
 
