@@ -20,6 +20,7 @@ mod data;
 
 use crate::addr::*;
 use crate::base::*;
+use crate::base::Error::*;
 use crate::data::*;
 /*
 use crate::addr::{Addr, AddrImplTrait};
@@ -34,6 +35,7 @@ struct AutoScrub<'a, const N: usize, const W: usize, const S: usize, D, A, I>
 where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
+    I: CacheIterator<'a, N, W, S, D, A>,
 {
     scrubber: MemoryScrubber<'a, N, W, S, D, A, I>,
     desc: &'a mut dyn AutoScrubDesc<N, W, S, D, A>,
@@ -160,14 +162,12 @@ where
 */
 {
     // FIXME: why don't I inherit this?
-/*
     fn scrub(&self, n: Addr<A>) -> Result<(), Error>
     where
         Self: Sized,
     {
         return Err(InternalError);
     }
-*/
 
     fn cache(&self) -> &dyn CacheBase<N, W, S, D, A> {
         self.cache
