@@ -9,7 +9,7 @@ use core::ptr;
 use num_traits::PrimInt;
 use std::convert::From;
 use std::iter;
-//use std::marker::PhantomData;
+use std::marker::PhantomData;
 //use std::slice;
 
 /*
@@ -92,7 +92,7 @@ pub trait MemoryScrubberBase<
 > where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
-    I: CacheIterator<'a, N, W, S, D, A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
     usize: From<A>,
 {
     /// Returns a reference to a CacheBase trait
@@ -187,7 +187,10 @@ pub trait MemoryScrubberBase<
     }
 }
 
-pub trait CacheIterator<
+// Trait to iterate through cache lines. The next() function never returns
+// None; it's up to the caller to implement any limit on number of cache
+// lines iterated
+pub trait ScrubAreasIteratorBase<
     'a,
     const N: usize,
     const W: usize,
@@ -202,6 +205,111 @@ where
     fn new(cache: &dyn CacheBase<N, W, S, D, A>, scrub_areas: &[MemArea<A>], n: Addr<A>) -> Self;
 }
 
+// Iterator for a given number of cache lines
+//
+// # Type Parameters
+//
+// * `C` - CacheBase, cache configuration
+//
+// * `CL` - CacheBase, cache line configuration
+//
+// * `CLD` - CacheBase, memory overlayable cache line data
+//
+// * `N` - Number of cache lines
+//
+// * `W` - Number of ways per cache line
+//
+// * `D` - Type of a single cache line item. This is the same size as what the
+//         ECC unit works on
+//
+// * `S` - Number of items of type `D` in a single cache line way
+pub struct ScrubCountIterator<
+    'a,
+    const N: usize,
+    const W: usize,
+    const S: usize,
+    D,
+    A,
+    I,
+> where
+    D: DataImplTrait<D>,
+    A: AddrImplTrait<A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
+{
+    cache: &'a dyn CacheBase<N, W, S, D, A>,
+    scrub_areas: &'a [MemArea<A>],
+    n_scrublines: Addr<A>,
+    i: Addr<A>,
+    iterator: I,
+    _marker1: PhantomData<D>,
+}
+
+/*
+impl<'a, const N: usize, const W: usize, const S: usize, D, A, I>
+    ScrubCountIterator<'a, N, W, S, D, A>
+where
+    D: DataImplTrait<D>,
+    A: AddrImplTrait<A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
+{
+}
+*/
+
+impl<'a, const N: usize, const W: usize, const S: usize, D, A, I>
+    ScrubCountIterator<'a, N, W, S, D, A, I>
+where
+    D: DataImplTrait<D>,
+    A: AddrImplTrait<A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
+{
+    fn new(
+        cache: &'a dyn CacheBase<N, W, S, D, A>,
+        scrub_areas: &'a [MemArea<A>],
+        n_scrublines: Addr<A>,
+    ) -> Result<ScrubCountIterator<'a, N, W, S, D, A, I>, Error> {
+        let iterator = I::new(cache, scrub_areas, n_scrublines)?;
+
+        Ok(ScrubCountIterator {
+            cache: cache,
+            scrub_areas: scrub_areas,
+            n_scrublines: n_scrublines,
+            i: 0usize.into(),
+            iterator: iterator,
+            _marker1: PhantomData,
+        })
+    }
+}
+
+impl<'a, const N: usize, const W: usize, const S: usize, D, A, I>
+    iter::Iterator for ScrubCountIterator<'a, N, W, S, D, A, I>
+where
+    D: DataImplTrait<D>,
+    A: AddrImplTrait<A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
+{
+    type Item = Addr<A>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            //println!("ScrubCountIterator: next()");
+            if self.i == self.n_scrublines {
+                return None;
+            }
+
+            let p = self.iterator.next();
+
+            if p.is_some() {
+                self.i += 1usize.into();
+                return p;
+            }
+
+            self.iterator =
+                ScrubAreasIterator::new(self.cache, self.scrub_areas)
+                    .expect("ScrubAreasIterator::new failed");
+        }
+    }
+}
+
 // This is the basic definition of cache line data. Note that is is never
 // instantiated, though traits that use this trait usually are. Specifically,
 // means that none these will have "self" parameter.
@@ -211,10 +319,6 @@ pub trait CachelineBase<const S: usize, D, A>
 where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
-/*
-    *mut D: From<A>,
-    Addr<A>: Into<*mut D>,
-*/
 {
     // Check cache line related parameters.
     //

@@ -35,7 +35,8 @@ struct AutoScrub<'a, const N: usize, const W: usize, const S: usize, D, A, I>
 where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
-    I: CacheIterator<'a, N, W, S, D, A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
+    usize: From<A>,
 {
     scrubber: MemoryScrubber<'a, N, W, S, D, A, I>,
     desc: &'a mut dyn AutoScrubDesc<N, W, S, D, A>,
@@ -50,7 +51,8 @@ impl<'a, const N: usize, const W: usize, const S: usize, D, A, I>
 where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
-    I: CacheIterator<'a, N, W, S, D, A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
+    usize: From<A>,
 {
     /// Create a new AutoScrub object
     ///
@@ -118,11 +120,8 @@ pub struct MemoryScrubber<
 > where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
-    I: CacheIterator<'a, N, W, S, D, A>,
-/*
-    *mut D: From<A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
     usize: From<A>,
-*/
 {
     cache: &'a dyn CacheBase<N, W, S, D, A>,
     scrub_areas: &'a [MemArea<A>],
@@ -134,11 +133,8 @@ impl<'a, const N: usize, const W: usize, const S: usize, D, A, I>
 where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
-    I: CacheIterator<'a, N, W, S, D, A>,
-/*
-    *mut D: From<A>,
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>,
     usize: From<A>,
-*/
 {
     fn new(cache: &'a dyn CacheBase<N, W, S, D, A>, scrub_areas: &'a [MemArea<A>]) -> Result<MemoryScrubber::<'a, N, W, S, D, A, I>, Error> {
         Ok(MemoryScrubber::<'a, N, W, S, D, A, I> {
@@ -155,12 +151,9 @@ where
     D: DataImplTrait<D> + 'a,
     A: AddrImplTrait<A>,
     usize: From<A>,
-    I: CacheIterator<'a, N, W, S, D, A>
-/*
-    *mut D: From<A>,
-    usize: From<A>,
-*/
+    I: ScrubAreasIteratorBase<'a, N, W, S, D, A>
 {
+/*
     // FIXME: why don't I inherit this?
     fn scrub(&self, n: Addr<A>) -> Result<(), Error>
     where
@@ -168,6 +161,7 @@ where
     {
         return Err(InternalError);
     }
+*/
 
     fn cache(&self) -> &dyn CacheBase<N, W, S, D, A> {
         self.cache
@@ -183,10 +177,6 @@ pub struct Cache<const N: usize, const W: usize, const S: usize, D, A>
 where
     D: DataImplTrait<D>,
     A: AddrImplTrait<A>,
-    /*
-        *mut D: From<A>,
-        usize: From<A>,
-    */
 {
     //    cacheline: Cacheline<S, D>,
     _marker1: PhantomData<D>,
@@ -349,123 +339,6 @@ where
 //
 // *    There are N cache lines in the cache and N is a power of two.
 //
-
-// Read a given number of cache lines
-//
-// # Type Parameters
-//
-// * `C` - CacheBase, cache configuration
-//
-// * `CL` - CacheBase, cache line configuration
-//
-// * `CLD` - CacheBase, memory overlayable cache line data
-//
-// * `N` - Number of cache lines
-//
-// * `W` - Number of ways per cache line
-//
-// * `D` - Type of a single cache line item. This is the same size as what the
-//         ECC unit works on
-//
-// * `S` - Number of items of type `D` in a single cache line way
-pub struct ScrubCountIterator<
-    'a,
-    const N: usize,
-    const W: usize,
-    const S: usize,
-    D,
-    A,
-> where
-    D: DataImplTrait<D>,
-    A: AddrImplTrait<A>,
-    /*
-        *mut D: From<A>,
-        usize: From<A>,
-    */
-{
-    cache: &'a Cache<N, W, S, D, A>,
-    scrub_areas: &'a [MemArea<A>],
-    n_scrublines: Addr<A>,
-    i: Addr<A>,
-    iterator: ScrubAreasIterator<'a, N, W, S, D, A>,
-    _marker1: PhantomData<D>,
-}
-
-impl<'a, const N: usize, const W: usize, const S: usize, D, A>
-    ScrubCountIterator<'a, N, W, S, D, A>
-where
-    D: DataImplTrait<D>,
-    A: AddrImplTrait<A>,
-    /*
-        *mut D: From<A>,
-        usize: From<A>,
-    */
-{
-}
-
-impl<'a, const N: usize, const W: usize, const S: usize, D, A>
-    CacheIterator<'a, N, W, S, D, A>
-    for ScrubCountIterator<'a, N, W, S, D, A>
-where
-    D: DataImplTrait<D>,
-    A: AddrImplTrait<A>,
-    /*
-        *mut D: From<A>,
-        usize: From<A>,
-    */
-{
-    fn new(
-        cache: &'a Cache<N, W, S, D, A>,
-        scrub_areas: &'a [MemArea<A>],
-        n_scrublines: Addr<A>,
-    ) -> Result<ScrubCountIterator<'a, N, W, S, D, A>, Error> {
-        let iterator = ScrubAreasIterator::new(cache, scrub_areas)?;
-
-        Ok(ScrubCountIterator {
-            cache: cache,
-            scrub_areas: scrub_areas,
-            n_scrublines: n_scrublines,
-            i: 0usize.into(),
-            iterator: iterator,
-            _marker1: PhantomData,
-        })
-    }
-}
-
-impl<'a, const N: usize, const W: usize, const S: usize, D, A>
-    iter::Iterator for ScrubCountIterator<'a, N, W, S, D, A>
-where
-    D: DataImplTrait<D>,
-    A: AddrImplTrait<A>,
-    /*
-        *mut D: From<A>,
-        usize: From<A>,
-    // FIXME: Combine with the above?
-        usize: Add<A>,
-    */
-{
-    type Item = Addr<A>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            //println!("ScrubCountIterator: next()");
-            if self.i == self.n_scrublines {
-                return None;
-            }
-
-            let p = self.iterator.next();
-
-            if p.is_some() {
-                self.i += 1usize.into();
-                return p;
-            }
-
-            self.iterator =
-                ScrubAreasIterator::new(self.cache, self.scrub_areas)
-                    .expect("ScrubAreasIterator::new failed");
-        }
-    }
-}
 
 // Walks through cache line-sized items. Never reaches an end, that is,
 // next() never returns None
