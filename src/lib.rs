@@ -170,6 +170,9 @@ where
     fn scrub_areas(&self) -> &[MemArea<A>] {
         self.scrub_areas
     }
+
+    fn cacheline_width(&self) -> usize {
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -311,6 +314,8 @@ where
 {
 }
 
+// FIXME: This has some duplication with things in tables in base.rs.
+
 // Low level memory scrubber definitions
 // =====================================
 // The assumptions are as follows:
@@ -320,7 +325,7 @@ where
 //      have to be an identify mapping nor should it map anything that should
 //      not be scrubbed.
 //
-// *    Cache lines are comprisied of S items of type D. Type D is an integer
+// *    Cache lines are comprisied of S bytes of type D. Type D is an integer
 //      value the same size as those the ECC unit processes. Its size is
 //      is a power of two and must be greater than one.
 //
@@ -889,10 +894,12 @@ impl CCacheBase {
 
 impl CacheBase for CCacheBase {
 /*
+    /// Return the number of items in a cache line
     fn cacheline_width(&self) -> usize {
         self.cacheline_width
     }
 
+    // Returns the number of bytes in a cache line
     fn cacheline_size(&self) -> usize {
         let self_ptr: *const CCacheBase = self as *const _;
         1 << (self.c_cacheline_size)(self_ptr)

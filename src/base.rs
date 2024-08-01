@@ -98,6 +98,16 @@ pub trait MemoryScrubberBase<
     /// Returns a reference to a CacheBase trait
     fn cache(&self) -> &dyn CacheBase<N, W, S, D, A>;
 
+    /// Return cacheline width in number of D items
+    fn cacheline_width(&self) -> usize {
+        S / mem::size_of::<D>()
+    }
+
+    /// Return cacheline size in number of bytes
+    fn cacheline_size(&self) -> usize {
+        S
+    }
+
     /// Return a references to an array of MemAreas.
     fn scrub_areas(&self) -> &[MemArea<A>];
 
@@ -163,7 +173,7 @@ pub trait MemoryScrubberBase<
     {
         let cacheline_size = S;
         let cacheline_size_mask = (cacheline_size - 1).into();
-        let cacheline_width = CachelineBase::<S, D, A>::cacheline_width();
+        let cacheline_width = self.cacheline_width();
 
         // Verify that the number of bytes to scrub is an even multiple of the
         // cacheline size
