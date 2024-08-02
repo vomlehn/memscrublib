@@ -39,10 +39,10 @@ where
     }
 }
 
-impl<D> DataImplTrait<u32> for Data<D>
+impl<D> DataImplTrait<D> for Data<D>
 where
     D: DataImplTrait<D>,
-    *mut u32: From<D>,
+    *mut D: From<D>,
 {
 }
 
