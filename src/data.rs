@@ -22,7 +22,22 @@ pub trait DataImplTrait<D>:
 // FIXME: remove allow(dead_code)
 #[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub struct Data<D>(D);
+pub struct Data<D>(D)
+where
+    D: DataImplTrait<D>;
+
+impl<D>
+From<Data<D>>
+for *mut D
+where
+    D: DataImplTrait<D>,
+{
+    fn from(value: Data<D>) -> *mut D {
+        let p: *mut D;
+        p = value.0.into();
+        p
+    }
+}
 
 impl<D> DataImplTrait<u32> for Data<D>
 where
@@ -33,7 +48,7 @@ where
 
 impl<D> fmt::Display for Data<D>
 where
-    D: Unsigned + fmt::Display,
+    D: DataImplTrait<D> + fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -42,7 +57,7 @@ where
 
 impl<D> fmt::LowerHex for Data<D>
 where
-    D: Unsigned + fmt::LowerHex,
+    D: DataImplTrait<D> + fmt::LowerHex,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:x}", self.0)
@@ -90,38 +105,19 @@ where
 }
 
 /*
-impl<D> From<u32> for Data<D>
+impl<D> From<Data<usize>> for usize
 where
     D: DataImplTrait<D>,
 {
-    fn from(value: u32) -> Self {
-        value.into() // Convert u32 to Data
+    fn from(value: Data<usize>) -> usize {
+        value.0.into()
     }
 }
 */
 
-impl<D> From<Data<D>> for *mut u32
-where
-    *mut u32: From<D>,
-{
-    fn from(value: Data<D>) -> Self {
-        value.0.into()
-    }
-}
-
-impl<D> From<Data<D>> for usize
-where
-    D: Unsigned,
-    usize: From<D>,
-{
-    fn from(value: Data<D>) -> Self {
-        value.0.into()
-    }
-}
-
 impl<D> From<usize> for Data<D>
 where
-    D: Unsigned + From<usize>,
+    D: DataImplTrait<D> + From<usize>,
 {
     fn from(value: usize) -> Self {
         value.into() // Convert usize to Data
@@ -130,7 +126,7 @@ where
 
 impl<D> From<u128> for Data<D>
 where
-    D: Unsigned + From<u128>,
+    D: DataImplTrait<D> + From<u128>,
 {
     fn from(value: u128) -> Self {
         value.into() // Convert u128 to Data
@@ -139,7 +135,7 @@ where
 
 impl<D> From<u64> for Data<D>
 where
-    D: Unsigned + From<u64>,
+    D: DataImplTrait<D> + From<u64>,
 {
     fn from(value: u64) -> Self {
         value.into() // Convert u64 to Data
@@ -148,7 +144,7 @@ where
 
 impl<D> From<u32> for Data<D>
 where
-    D: Unsigned + From<u32>,
+    D: DataImplTrait<D> + From<u32>,
 {
     fn from(value: u32) -> Self {
         value.into() // Convert u32 to Data

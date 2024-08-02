@@ -346,7 +346,9 @@ where
     // Return the number of bits required to hold the index into the cache
     // line
     fn cacheline_width() -> usize {
-        bit_width::<usize>(std::mem::size_of::<D>() * S).unwrap()
+        let data_width = std::mem::size_of::<D>();
+        
+        bit_width::<usize>(data_width * S).unwrap()
     }
 
     // Return the number of bytes in a cache line

@@ -10,7 +10,7 @@ extern crate num_traits;
 //use core::ptr;
 //use num_traits::{PrimInt, Unsigned};
 use std::convert::From;
-use std::iter;
+//use std::iter;
 use std::marker::PhantomData;
 //use std::slice;
 
@@ -20,7 +20,7 @@ mod data;
 
 use crate::addr::*;
 use crate::base::*;
-use crate::base::Error::*;
+//use crate::base::Error::*;
 use crate::data::*;
 /*
 use crate::addr::{Addr, AddrImplTrait};
@@ -172,6 +172,7 @@ where
     }
 
     fn cacheline_width(&self) -> usize {
+        S / std::mem::size_of::<D>()
     }
 }
 
